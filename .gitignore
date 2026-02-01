@@ -39,3 +39,5 @@ npm-debug.log
 *.db
 *.db-*
 
+# Hologram generated JavaScript bundles.
+/priv/static/hologram/

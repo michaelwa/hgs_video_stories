@@ -24,7 +24,7 @@ defmodule HgsVideoStoriesWeb.Endpoint do
     at: "/",
     from: :hgs_video_stories,
     gzip: not code_reloading?,
-    only: HgsVideoStoriesWeb.static_paths(),
+    only: ["hologram" | HgsVideoStoriesWeb.static_paths()],
     raise_on_missing_only: code_reloading?
 
   # Code reloading can be explicitly enabled under the
@@ -51,5 +51,6 @@ defmodule HgsVideoStoriesWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+  plug Hologram.Router
   plug HgsVideoStoriesWeb.Router
 end
