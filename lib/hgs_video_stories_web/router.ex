@@ -20,10 +20,13 @@ defmodule HgsVideoStoriesWeb.Router do
     get "/", PageController, :home
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", HgsVideoStoriesWeb do
-  #   pipe_through :api
-  # end
+  scope "/api", HgsVideoStoriesWeb do
+    pipe_through :api
+
+    get "/server_count", ServerCountController, :show
+    post "/server_count/increment", ServerCountController, :increment
+    post "/server_count/decrement", ServerCountController, :decrement
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:hgs_video_stories, :dev_routes) do
