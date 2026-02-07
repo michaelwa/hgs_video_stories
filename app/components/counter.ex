@@ -2,10 +2,13 @@ defmodule HgsVideoStories.Hologram.Components.Counter do
   use Hologram.Component
 
   alias HgsVideoStories.ServerCounter
+  alias HgsVideoStories.Hologram.Components.ServerCounterDisplay
 
   @impl Component
   def init(_props, component, server) do
-    {put_state(component, count: 0), server}
+    initial_count = ServerCounter.get()
+
+    {put_state(component, count: initial_count, server_count: initial_count), server}
   end
 
   @impl Component
@@ -51,6 +54,8 @@ defmodule HgsVideoStories.Hologram.Components.Counter do
           </div>
         </div>
       </div>
+
+      <ServerCounterDisplay cid="server-counter-display" count={@server_count} />
     </div>
     """
   end
@@ -71,11 +76,15 @@ defmodule HgsVideoStories.Hologram.Components.Counter do
     |> put_command(:save_count, count: next_count)
   end
 
+  def action(:sync_server_count, %{count: count}, component) do
+    put_state(component, :server_count, count)
+  end
+
   def command(:save_count, params, server) do
     count = params[:count] || params["count"] || 0
-    _updated_count = ServerCounter.set(count)
+    updated_count = ServerCounter.set(count)
 
     IO.puts("save_count::#{count}")
-    server
+    put_action(server, :sync_server_count, count: updated_count)
   end
 end

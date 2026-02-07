@@ -15,16 +15,12 @@ defmodule HgsVideoStories.Hologram.Pages.CounterPage do
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p class="text-xs uppercase tracking-[0.35em] text-white/60">Hologram Proof of Concept</p>
-            <h1 class="mt-3 text-4xl font-semibold leading-tight text-white">Counter</h1>
+            <h1 class="mt-3 text-4xl font-semibold leading-tight text-white">Client Side Counter with Server Notification</h1>
             <p class="mt-3 max-w-xl text-base text-white/70">
               A minimal stateful component with client-side interactions powered by Hologram.
             </p>
           </div>
 
-          <div class="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80 shadow-inner shadow-white/5">
-            <span class="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(16,185,129,0.2)]" />
-            Live state sync
-          </div>
         </div>
 
         <Counter cid="counter" />
