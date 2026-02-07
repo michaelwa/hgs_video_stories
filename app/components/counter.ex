@@ -1,6 +1,8 @@
 defmodule HgsVideoStories.Hologram.Components.Counter do
   use Hologram.Component
 
+  alias Hologram.Server
+  alias HgsVideoStories.GroupCounter, as: GroupCounterStore
   alias HgsVideoStories.ServerCounter
   alias HgsVideoStories.Hologram.Components.ServerCounterDisplay
 
@@ -65,7 +67,7 @@ defmodule HgsVideoStories.Hologram.Components.Counter do
 
     component
     |> put_state(:count, next_count)
-    |> put_command(:save_count, count: next_count)
+    |> put_command(:save_count, count: next_count, action: "up")
   end
 
   def action(:decrement, _params, component) do
@@ -73,18 +75,44 @@ defmodule HgsVideoStories.Hologram.Components.Counter do
 
     component
     |> put_state(:count, next_count)
-    |> put_command(:save_count, count: next_count)
+    |> put_command(:save_count, count: next_count, action: "down")
+  end
+
+  def action(:sync_after_save, params, component) do
+    count = params[:count] || params["count"] || component.state.server_count
+    snapshot = params[:group_snapshot] || params["group_snapshot"]
+
+    component = put_state(component, :server_count, count)
+
+    if is_nil(snapshot) do
+      component
+    else
+      put_action(component, name: :sync_group_snapshot, params: [snapshot: snapshot], target: "group-counter")
+    end
   end
 
   def action(:sync_server_count, %{count: count}, component) do
-    put_state(component, :server_count, count)
+    component
+    |> put_state(:server_count, count)
   end
 
   def command(:save_count, params, server) do
     count = params[:count] || params["count"] || 0
+    action = params[:action] || params["action"] || "unknown"
     updated_count = ServerCounter.set(count)
+    group_snapshot = maybe_update_group_counter(server, count, action)
 
     IO.puts("save_count::#{count}")
-    put_action(server, :sync_server_count, count: updated_count)
+
+    server
+    |> Server.put_session(:last_count, count)
+    |> put_action(:sync_after_save, count: updated_count, group_snapshot: group_snapshot)
+  end
+
+  defp maybe_update_group_counter(server, count, action) do
+    case Server.get_session(server, :group_counter_user_id) do
+      nil -> nil
+      user_id -> GroupCounterStore.save_count(user_id, count, action)
+    end
   end
 end

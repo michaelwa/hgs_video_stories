@@ -24,7 +24,6 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/hgs_video_stories"
 import topbar from "../vendor/topbar"
-import {initGroupCounterChannel} from "./group_counter_channel"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
@@ -46,8 +45,6 @@ liveSocket.connect()
 // >> liveSocket.enableLatencySim(1000)  // enabled for duration of browser session
 // >> liveSocket.disableLatencySim()
 window.liveSocket = liveSocket
-
-initGroupCounterChannel()
 
 // The lines below enable quality of life phoenix_live_reload
 // development features:

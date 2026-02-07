@@ -33,6 +33,11 @@ defmodule HgsVideoStories.GroupCounter do
     GenServer.call(__MODULE__, {:leave, user_id})
   end
 
+  @spec snapshot() :: snapshot()
+  def snapshot do
+    GenServer.call(__MODULE__, :snapshot)
+  end
+
   @spec topic() :: String.t()
   def topic, do: @topic
 
@@ -106,6 +111,10 @@ defmodule HgsVideoStories.GroupCounter do
 
         {:reply, snapshot(new_state), new_state}
     end
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    {:reply, snapshot(state), state}
   end
 
   defp prepend_log(logs, message) do
