@@ -39,6 +39,7 @@ defmodule HgsVideoStoriesWeb.Endpoint do
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
     plug Phoenix.LiveReloader
     plug Phoenix.CodeReloader
+    plug HgsVideoStoriesWeb.Plugs.HologramAssetManifestSync
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :hgs_video_stories
   end
 
