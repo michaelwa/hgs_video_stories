@@ -26,7 +26,7 @@ defmodule HgsVideoStories.Hologram.Components.Counter do
         </button>
 
         <div class="text-center">
-          <div class="text-5xl font-semibold tabular-nums tracking-tight text-white drop-shadow-sm">
+          <div id="client-count-value" class="text-5xl font-semibold tabular-nums tracking-tight text-white drop-shadow-sm">
             {@count}
           </div>
           <div class="mt-2 text-[11px] uppercase tracking-[0.35em] text-white/60">Count</div>

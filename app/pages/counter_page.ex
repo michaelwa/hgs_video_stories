@@ -2,6 +2,7 @@ defmodule HgsVideoStories.Hologram.Pages.CounterPage do
   use Hologram.Page
 
   alias HgsVideoStories.Hologram.Components.Counter
+  alias HgsVideoStories.Hologram.Components.GroupCounter
   alias HgsVideoStories.Hologram.Layouts.AppLayout
 
   layout AppLayout
@@ -24,6 +25,7 @@ defmodule HgsVideoStories.Hologram.Pages.CounterPage do
         </div>
 
         <Counter cid="counter" />
+        <GroupCounter cid="group-counter" />
       </div>
     </section>
     """
