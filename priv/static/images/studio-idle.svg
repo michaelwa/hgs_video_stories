@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Idle recording stage</title>
+  <desc id="desc">Placeholder illustration for idle stage</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#cbd5e1"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" rx="32" fill="url(#bg)"/>
+  <rect x="140" y="110" width="1000" height="500" rx="24" fill="#f8fafc" fill-opacity="0.65"/>
+  <circle cx="640" cy="360" r="96" fill="#475569" fill-opacity="0.18"/>
+  <path d="M605 325h70a15 15 0 0 1 15 15v40a15 15 0 0 1-15 15h-70a15 15 0 0 1-15-15v-40a15 15 0 0 1 15-15z" fill="#475569" fill-opacity="0.52"/>
+  <text x="640" y="548" font-family="ui-sans-serif, system-ui" font-size="36" text-anchor="middle" fill="#1e293b">Select a source to start preview</text>
+</svg>

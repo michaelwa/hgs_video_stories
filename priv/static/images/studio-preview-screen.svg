@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Screen preview stage</title>
+  <desc id="desc">Placeholder screen share preview</desc>
+  <defs>
+    <linearGradient id="scr" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#1f2937"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" rx="32" fill="url(#scr)"/>
+  <rect x="84" y="84" width="1112" height="552" rx="22" fill="#f8fafc"/>
+  <rect x="84" y="84" width="1112" height="72" rx="22" fill="#cbd5e1"/>
+  <circle cx="132" cy="120" r="10" fill="#ef4444"/>
+  <circle cx="164" cy="120" r="10" fill="#f59e0b"/>
+  <circle cx="196" cy="120" r="10" fill="#10b981"/>
+  <rect x="132" y="198" width="300" height="394" rx="14" fill="#e2e8f0"/>
+  <rect x="464" y="198" width="682" height="148" rx="14" fill="#dbeafe"/>
+  <rect x="464" y="368" width="682" height="224" rx="14" fill="#e0f2fe"/>
+  <text x="640" y="664" font-family="ui-sans-serif, system-ui" font-size="30" text-anchor="middle" fill="#e5e7eb">REC • SCREEN / APP</text>
+</svg>

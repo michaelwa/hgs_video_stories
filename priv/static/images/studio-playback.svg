@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Clip playback stage</title>
+  <desc id="desc">Placeholder clip playback with timeline</desc>
+  <defs>
+    <linearGradient id="play" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" rx="32" fill="url(#play)"/>
+  <rect x="96" y="86" width="1088" height="548" rx="24" fill="#020617" fill-opacity="0.45"/>
+  <circle cx="640" cy="332" r="88" fill="#e2e8f0" fill-opacity="0.92"/>
+  <path d="M612 285v94l72-47-72-47z" fill="#0f172a"/>
+  <rect x="170" y="580" width="940" height="12" rx="6" fill="#475569"/>
+  <rect x="170" y="580" width="396" height="12" rx="6" fill="#38bdf8"/>
+  <circle cx="566" cy="586" r="13" fill="#38bdf8"/>
+  <text x="170" y="560" font-family="ui-sans-serif, system-ui" font-size="24" fill="#e2e8f0">00:18</text>
+  <text x="1108" y="560" font-family="ui-sans-serif, system-ui" font-size="24" text-anchor="end" fill="#e2e8f0">01:16</text>
+</svg>
