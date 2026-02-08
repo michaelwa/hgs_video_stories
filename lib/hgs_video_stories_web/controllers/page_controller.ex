@@ -4,4 +4,8 @@ defmodule HgsVideoStoriesWeb.PageController do
   def home(conn, _params) do
     render(conn, :home)
   end
+
+  def record(conn, _params) do
+    render(conn, :record)
+  end
 end
