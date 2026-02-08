@@ -5,6 +5,7 @@ import {
   removeClipById,
   supportsPersistentClipStore,
 } from "./media_clip_store"
+import {uploadClipToServer} from "./media_clip_ingest"
 
 const formatTimer = totalSeconds => {
   const minutes = Math.floor(totalSeconds / 60)
@@ -199,30 +200,14 @@ const initMediaLibrary = () => {
     elements.saveServer.textContent = "Saving..."
     elements.helper.textContent = "Uploading clip to server..."
 
-    const uploadFile = new File([fullClip.blob], `${selected.id}.webm`, {
-      type: fullClip.blob.type || "video/webm",
+    const result = await uploadClipToServer({
+      blob: fullClip.blob,
+      id: selected.id,
+      title: selected.title,
+      source: selected.source,
+      durationSeconds: selected.duration_seconds,
+      createdAt: selected.created_at,
     })
-
-    const formData = new FormData()
-    formData.append("clip", uploadFile)
-    formData.append("title", selected.title)
-    formData.append("source", selected.source)
-    formData.append("duration_seconds", String(selected.duration_seconds || 0))
-    formData.append("created_at", selected.created_at)
-
-    const response = await fetch("/api/media_clips", {
-      method: "POST",
-      body: formData,
-      headers: {
-        "x-requested-with": "XMLHttpRequest",
-      },
-    })
-
-    if (!response.ok) {
-      throw new Error("Upload failed")
-    }
-
-    const result = await response.json()
 
     await addClipToStore({
       ...fullClip,

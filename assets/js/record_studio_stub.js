@@ -1,4 +1,5 @@
 import {addClipToStore, supportsPersistentClipStore} from "./media_clip_store"
+import {uploadClipToServer} from "./media_clip_ingest"
 
 const STAGE_IMAGES = {
   idle: "/images/studio-idle.svg",
@@ -36,6 +37,7 @@ const initRecordStudio = () => {
     stateBadge: document.getElementById("studio-state-badge"),
     sourceBadge: document.getElementById("studio-source-badge"),
     timerBadge: document.getElementById("studio-timer-badge"),
+    ingestBadge: document.getElementById("studio-ingest-badge"),
     sourceStatusBadge: document.getElementById("source-status-badge"),
     sourceCamera: document.getElementById("source-camera"),
     sourceScreen: document.getElementById("source-screen"),
@@ -54,6 +56,8 @@ const initRecordStudio = () => {
     stageCaption: document.getElementById("stage-caption"),
     lastCaptureNote: document.getElementById("last-capture-note"),
     lastDownload: document.getElementById("last-download"),
+    ingestStatusNote: document.getElementById("ingest-status-note"),
+    ingestServerLink: document.getElementById("ingest-server-link"),
   }
 
   if (!elements.stateBadge) return
@@ -68,6 +72,9 @@ const initRecordStudio = () => {
     chunks: [],
     errorMessage: null,
     lastCapture: null,
+    ingestStatus: "idle",
+    ingestMessage: null,
+    ingestServerUrl: null,
   }
 
   const setButtonDisabled = (button, disabled) => {
@@ -227,6 +234,12 @@ const initRecordStudio = () => {
     }
   }
 
+  const setIngestState = ({status, message = null, serverUrl = null}) => {
+    state.ingestStatus = status
+    state.ingestMessage = message
+    state.ingestServerUrl = serverUrl
+  }
+
   const handleRecordingStop = async () => {
     const blob = new Blob(state.chunks, {type: state.recorder?.mimeType || "video/webm"})
     state.chunks = []
@@ -252,13 +265,54 @@ const initRecordStudio = () => {
         created_at: new Date(clipId).toISOString(),
         size_bytes: blob.size,
       }
+
+      let persistedLocally = false
       if (supportsPersistentClipStore()) {
         await addClipToStore({
           ...clipRecord,
           blob,
         })
+        persistedLocally = true
       } else {
         state.errorMessage = "Clip recorded, but this browser cannot persist clips for Media Library."
+      }
+
+      setIngestState({
+        status: "uploading",
+        message: "Uploading clip to server...",
+      })
+      await render()
+
+      try {
+        const ingestResult = await uploadClipToServer({
+          blob,
+          id: clipRecord.id,
+          title: clipRecord.title,
+          source: clipRecord.source,
+          durationSeconds: clipRecord.duration_seconds,
+          createdAt: clipRecord.created_at,
+        })
+
+        if (persistedLocally) {
+          await addClipToStore({
+            ...clipRecord,
+            blob,
+            server_url: ingestResult.url,
+            server_saved_at: ingestResult.saved_at,
+            server_id: ingestResult.id,
+          })
+        }
+
+        setIngestState({
+          status: "saved",
+          message: "Clip ingested to server.",
+          serverUrl: ingestResult.url,
+        })
+      } catch (error) {
+        setIngestState({
+          status: "failed",
+          message: `Server ingest failed (${error.message || "unknown error"}).`,
+        })
       }
     }
 
@@ -276,6 +330,16 @@ const initRecordStudio = () => {
       : "Source: not selected"
     elements.timerBadge.textContent = `Timer: ${timerText}`
     elements.controlTimer.textContent = timerText
+
+    elements.ingestBadge.textContent = `Ingest: ${state.ingestStatus}`
+    elements.ingestBadge.classList.remove("badge-success", "badge-warning", "badge-error")
+    if (state.ingestStatus === "saved") {
+      elements.ingestBadge.classList.add("badge-success")
+    } else if (state.ingestStatus === "uploading") {
+      elements.ingestBadge.classList.add("badge-warning")
+    } else if (state.ingestStatus === "failed") {
+      elements.ingestBadge.classList.add("badge-error")
+    }
 
     elements.sourceStatusBadge.textContent = state.status === "error"
       ? "Capture error"
@@ -327,17 +391,26 @@ const initRecordStudio = () => {
 
     elements.controlHelp.textContent = state.errorMessage || (hasSource
       ? hasPreviewStream
-        ? "Recorded clips are available in Media Library."
+        ? "Recordings are ingested to server automatically and retained locally."
         : "Waiting for permission to access your selected source."
       : "Select a capture source to unlock recording controls.")
 
     if (state.lastCapture) {
       const mb = (state.lastCapture.size / (1024 * 1024)).toFixed(2)
-      elements.lastCaptureNote.textContent = `Last capture ready in browser memory (${mb} MB).`
+      elements.lastCaptureNote.textContent = `Last capture retained in browser memory (${mb} MB).`
       setButtonDisabled(elements.lastDownload, false)
     } else {
       elements.lastCaptureNote.textContent = "No captures in memory yet."
       setButtonDisabled(elements.lastDownload, true)
+    }
+
+    elements.ingestStatusNote.textContent = state.ingestMessage || "Server ingest status will appear here after recording."
+    if (state.ingestServerUrl) {
+      elements.ingestServerLink.classList.remove("hidden")
+      elements.ingestServerLink.href = state.ingestServerUrl
+    } else {
+      elements.ingestServerLink.classList.add("hidden")
+      elements.ingestServerLink.href = "#"
     }
   }
 

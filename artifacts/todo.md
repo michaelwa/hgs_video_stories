@@ -30,11 +30,11 @@
   - Current implementation note: done as a client-side prototype in `assets/js/record_studio_stub.js` using `getUserMedia`, `getDisplayMedia`, and `MediaRecorder`.
   - Current implementation note: includes explicit `Turn Off Capture` control and automatic preview stream shutdown when switching into playback mode.
 
-- [ ] Confirm and implement server-ingest-first architecture for recordings.
-  - Stream/chunk recordings directly to backend ingest rather than relying on local disk save.
-  - Replace any "upload/save" UX with ingest/processing status (for example: chunk ingest, transcode, transcript readiness).
+- [x] Confirm and implement server-ingest-first architecture for recordings.
+  - `/record` now uploads each completed clip to backend ingest automatically (`POST /api/media_clips`).
+  - Recording UI now exposes ingest state on-page (`idle`, `uploading`, `saved`, `failed`) plus a link to the saved server copy.
+  - Local browser persistence remains enabled as a fallback and for immediate review/download.
   - Keep "download clip" as an explicit user action only.
-  - Current implementation note: today this is a single-shot clip upload endpoint (`POST /api/media_clips`) used by the manual save action.
 
 ## Later (Auth Integration / Polish)
 
@@ -46,4 +46,5 @@
   - Handle device hot-swap/disconnect while previewing or recording.
   - Add browser compatibility messaging and guided recovery actions.
   - Add storage quota awareness via `navigator.storage.estimate()` and warn users before long recordings when local IndexedDB capacity is low.
+  - Move ingest transport from single-shot upload to chunked resumable ingest for very long recordings and unstable network conditions.
   - Add lightweight analytics around source selection, record success/failure, and drop-off points.
