@@ -10,7 +10,7 @@ defmodule HgsVideoStories.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      compilers: [:phoenix_live_view] ++ Mix.compilers() ++ [:hologram],
+      compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader]
     ]
   end
@@ -32,8 +32,8 @@ defmodule HgsVideoStories.MixProject do
   end
 
   # Specifies which paths to compile per environment.
-  defp elixirc_paths(:test), do: ["app", "lib", "test/support"]
-  defp elixirc_paths(_env), do: ["app", "lib"]
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
 
   # Specifies your project dependencies.
   #
@@ -54,7 +54,6 @@ defmodule HgsVideoStories.MixProject do
        app: false,
        compile: false,
        depth: 1},
-      {:hologram, "~> 0.6.6"},
       {:jason, "~> 1.2"},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:phoenix, "~> 1.8.3"},

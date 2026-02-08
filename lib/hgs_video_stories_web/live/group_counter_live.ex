@@ -45,7 +45,7 @@ defmodule HgsVideoStoriesWeb.GroupCounterLive do
                 LiveView Group Counter
               </h1>
               <p class="mt-3 max-w-xl text-base text-white/70">
-                Same behavior as the Hologram group counter, implemented as pure LiveView + PubSub.
+                Group counter implemented as pure LiveView + PubSub.
               </p>
             </div>
           </div>

@@ -15,7 +15,6 @@ defmodule HgsVideoStories.Application do
       {DNSCluster, query: Application.get_env(:hgs_video_stories, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: HgsVideoStories.PubSub},
       HgsVideoStories.ServerCounter,
-      HgsVideoStories.GroupCounter,
       HgsVideoStories.LiveGroupCounter,
       # Start a worker by calling: HgsVideoStories.Worker.start_link(arg)
       # {HgsVideoStories.Worker, arg},

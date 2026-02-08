@@ -15,10 +15,6 @@ defmodule HgsVideoStoriesWeb.Endpoint do
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
 
-  socket "/socket", HgsVideoStoriesWeb.UserSocket,
-    websocket: true,
-    longpoll: false
-
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),
@@ -28,7 +24,7 @@ defmodule HgsVideoStoriesWeb.Endpoint do
     at: "/",
     from: :hgs_video_stories,
     gzip: not code_reloading?,
-    only: ["hologram" | HgsVideoStoriesWeb.static_paths()],
+    only: HgsVideoStoriesWeb.static_paths(),
     raise_on_missing_only: code_reloading?
 
   if Code.ensure_loaded?(Tidewave) do
@@ -43,7 +39,6 @@ defmodule HgsVideoStoriesWeb.Endpoint do
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
     plug Phoenix.LiveReloader
     plug Phoenix.CodeReloader
-    plug HgsVideoStoriesWeb.Plugs.HologramAssetManifestSync
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :hgs_video_stories
   end
 
@@ -62,6 +57,5 @@ defmodule HgsVideoStoriesWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
-  plug Hologram.Router
   plug HgsVideoStoriesWeb.Router
 end
