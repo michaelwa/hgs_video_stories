@@ -1,6 +1,6 @@
 # HgsVideoStories ToDo List
 
-## Recording Studio UX (Current `/record` stub)
+## Now (Build Next)
 
 - [ ] Implement a single state-driven `Capture + Recording Control` flow.
   - Define explicit UI/logic states: `idle`, `previewing`, `recording`, `paused`, `reviewing`, `error`.
@@ -16,20 +16,25 @@
   - Selecting a clip should activate playback mode in the shared stage.
   - Selecting "re-record" should switch back to preview mode and preserve source/device settings when possible.
 
-## Capture/Recording Technical Direction
+## Next (After UI State Wiring)
 
 - [ ] Implement capture from both camera/mic and desktop/app.
   - Camera/mic via `getUserMedia`.
   - Screen/app via `getDisplayMedia` with optional microphone merge.
   - Provide clear fallback messaging for permission denial, missing devices, and unsupported browser features.
 
-- [ ] Confirm server-ingest-first architecture for recordings.
-  - Recordings should stream/chunk directly to backend ingest rather than relying on local disk save.
+- [ ] Confirm and implement server-ingest-first architecture for recordings.
+  - Stream/chunk recordings directly to backend ingest rather than relying on local disk save.
   - Replace any "upload/save" UX with ingest/processing status (for example: chunk ingest, transcode, transcript readiness).
   - Keep "download clip" as an explicit user action only.
 
-## Header / Auth Shell Follow-up
+## Later (Auth Integration / Polish)
 
-- [ ] Keep the current logged-in shell stub and wire it to real account data later.
+- [ ] Keep the current logged-in shell stub and wire it to real account data.
   - Header includes logo, avatar, desktop profile menu, and mobile hamburger profile menu.
-  - Replace hardcoded user values (`Jordan Lee`) with authenticated user assigns when auth is implemented.
+  - Replace hardcoded user values (`Jordan Lee`) with authenticated user assigns once auth is implemented.
+
+- [ ] Add production-level resiliency and UX polish.
+  - Handle device hot-swap/disconnect while previewing or recording.
+  - Add browser compatibility messaging and guided recovery actions.
+  - Add lightweight analytics around source selection, record success/failure, and drop-off points.
