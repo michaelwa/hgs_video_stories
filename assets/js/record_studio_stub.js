@@ -2,8 +2,8 @@ const STAGE_IMAGES = {
   idle: "/images/studio-idle.svg",
   preview_camera: "/images/studio-preview-camera.svg",
   preview_screen: "/images/studio-preview-screen.svg",
-  playback: "/images/studio-playback.svg",
 }
+const MEDIA_LIBRARY_KEY = "hgs_video_stories_media_clips"
 
 const SOURCE_LABELS = {
   camera: "camera + mic",
@@ -16,17 +16,32 @@ const formatTimer = totalSeconds => {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
 }
 
-const formatClockTime = date => {
-  const hour = date.getHours()
-  const minute = String(date.getMinutes()).padStart(2, "0")
-  const suffix = hour >= 12 ? "PM" : "AM"
-  const displayHour = hour % 12 || 12
-  return `${displayHour}:${minute} ${suffix}`
+const findSupportedMimeType = () => {
+  const candidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ]
+
+  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || "video/webm"
+}
+
+const loadStoredClips = () => {
+  try {
+    return JSON.parse(localStorage.getItem(MEDIA_LIBRARY_KEY) || "[]")
+  } catch (_error) {
+    return []
+  }
+}
+
+const saveStoredClips = clips => {
+  localStorage.setItem(MEDIA_LIBRARY_KEY, JSON.stringify(clips))
 }
 
 const initRecordStudio = () => {
   const page = document.getElementById("recording-studio-page")
-  if (!page) return
+  if (!page || page.dataset.initialized === "true") return
+  page.dataset.initialized = "true"
 
   const elements = {
     stateBadge: document.getElementById("studio-state-badge"),
@@ -35,6 +50,7 @@ const initRecordStudio = () => {
     sourceStatusBadge: document.getElementById("source-status-badge"),
     sourceCamera: document.getElementById("source-camera"),
     sourceScreen: document.getElementById("source-screen"),
+    sourceClear: document.getElementById("source-clear"),
     cameraDevice: document.getElementById("camera-device"),
     micDevice: document.getElementById("microphone-device"),
     start: document.getElementById("record-start"),
@@ -43,30 +59,26 @@ const initRecordStudio = () => {
     stop: document.getElementById("record-stop"),
     controlTimer: document.getElementById("record-control-timer"),
     controlHelp: document.getElementById("control-help"),
-    tabPreview: document.getElementById("stage-tab-preview"),
-    tabPlayback: document.getElementById("stage-tab-playback"),
+    stageVideo: document.getElementById("stage-video"),
     stageImage: document.getElementById("stage-image"),
     stageTitle: document.getElementById("stage-title"),
     stageCaption: document.getElementById("stage-caption"),
-    clipList: document.getElementById("clip-list"),
-    clipEmpty: document.getElementById("clip-empty"),
-    clipRename: document.getElementById("clip-rename"),
-    clipDownload: document.getElementById("clip-download"),
-    clipRerecord: document.getElementById("clip-rerecord"),
-    clipDelete: document.getElementById("clip-delete"),
+    lastCaptureNote: document.getElementById("last-capture-note"),
+    lastDownload: document.getElementById("last-download"),
   }
+
+  if (!elements.stateBadge) return
 
   const state = {
     status: "idle",
     source: null,
-    mode: "preview",
     seconds: 0,
     timerRef: null,
-    selectedClipId: null,
-    clips: [
-      {id: 1, title: "Clip 01", source: "camera", duration: 42, at: "9:41 AM"},
-      {id: 2, title: "Clip 02", source: "screen", duration: 76, at: "9:45 AM"},
-    ],
+    previewStream: null,
+    recorder: null,
+    chunks: [],
+    errorMessage: null,
+    lastCapture: null,
   }
 
   const setButtonDisabled = (button, disabled) => {
@@ -75,72 +87,12 @@ const initRecordStudio = () => {
     button.classList.toggle("cursor-not-allowed", disabled)
   }
 
-  const selectSourceButtonStyles = source => {
-    ;[elements.sourceCamera, elements.sourceScreen].forEach(button => {
-      const isSelected = button.dataset.source === source
-      button.classList.toggle("border-primary/40", isSelected)
-      button.classList.toggle("bg-primary/10", isSelected)
-      button.classList.toggle("border-base-300", !isSelected)
-      button.classList.toggle("bg-base-100", !isSelected)
-    })
-  }
-
-  const setStagePreview = () => {
-    if (!state.source) {
-      elements.stageImage.src = STAGE_IMAGES.idle
-      elements.stageTitle.textContent = "Choose a source to begin previewing."
-      elements.stageCaption.textContent = "The same stage is used for both live preview and clip playback."
-      return
+  const getSelectedDeviceId = selectElement => {
+    const value = selectElement.value
+    if (value === "" || value.startsWith("cam-") || value.startsWith("mic-")) {
+      return undefined
     }
-
-    const key = state.source === "camera" ? "preview_camera" : "preview_screen"
-    elements.stageImage.src = STAGE_IMAGES[key]
-    elements.stageTitle.textContent =
-      state.source === "camera"
-        ? "Live camera preview ready."
-        : "Desktop/application preview ready."
-    elements.stageCaption.textContent = "Use Start Recording when you are ready."
-  }
-
-  const setStagePlayback = () => {
-    const selected = state.clips.find(clip => clip.id === state.selectedClipId)
-
-    if (!selected) {
-      elements.stageImage.src = STAGE_IMAGES.idle
-      elements.stageTitle.textContent = "Choose a clip to review playback."
-      elements.stageCaption.textContent = "Select any clip from the library to switch into review mode."
-      return
-    }
-
-    elements.stageImage.src = STAGE_IMAGES.playback
-    elements.stageTitle.textContent = `${selected.title} · ${selected.source === "camera" ? "Camera" : "Screen"}`
-    elements.stageCaption.textContent = `Duration ${formatTimer(selected.duration)} · Recorded ${selected.at}`
-  }
-
-  const renderClips = () => {
-    elements.clipList.innerHTML = ""
-
-    state.clips.forEach(clip => {
-      const item = document.createElement("li")
-      const button = document.createElement("button")
-      const isSelected = state.selectedClipId === clip.id
-      button.type = "button"
-      button.dataset.clipId = String(clip.id)
-      button.className = isSelected
-        ? "w-full rounded-2xl border border-primary/40 bg-primary/10 p-3 text-left"
-        : "w-full rounded-2xl border border-base-300 bg-base-200/70 p-3 text-left"
-      button.innerHTML = `<p class=\"text-sm font-semibold\">${clip.title} · ${clip.source === "camera" ? "Camera" : "Screen"}</p><p class=\"text-xs text-base-content/65\">${formatTimer(clip.duration)} · ${clip.at}</p>`
-      button.addEventListener("click", () => {
-        state.selectedClipId = clip.id
-        state.mode = "playback"
-        state.status = "reviewing"
-        render()
-      })
-      item.appendChild(button)
-      elements.clipList.appendChild(item)
-    })
-
-    elements.clipEmpty.classList.toggle("hidden", state.clips.length > 0)
+    return value
   }
 
   const stopTimer = () => {
@@ -160,151 +112,325 @@ const initRecordStudio = () => {
     }, 1000)
   }
 
-  const render = () => {
+  const stopPlayback = () => {
+    elements.stageVideo.pause()
+    elements.stageVideo.removeAttribute("src")
+    elements.stageVideo.srcObject = null
+    elements.stageVideo.load()
+  }
+
+  const stopPreviewStream = () => {
+    if (!state.previewStream) return
+    state.previewStream.getTracks().forEach(track => track.stop())
+    state.previewStream = null
+    stopPlayback()
+  }
+
+  const stopRecorderIfNeeded = () => {
+    if (state.recorder && state.recorder.state !== "inactive") {
+      state.recorder.stop()
+    }
+    state.recorder = null
+  }
+
+  const resetToIdle = async () => {
+    stopTimer()
+    stopRecorderIfNeeded()
+    stopPreviewStream()
+    state.source = null
+    state.status = "idle"
+    state.seconds = 0
+    state.errorMessage = null
+    await render()
+  }
+
+  const setStageImage = (src, title, caption) => {
+    elements.stageVideo.classList.add("hidden")
+    elements.stageImage.classList.remove("hidden")
+    elements.stageImage.src = src
+    elements.stageTitle.textContent = title
+    elements.stageCaption.textContent = caption
+  }
+
+  const setLivePreview = async stream => {
+    elements.stageImage.classList.add("hidden")
+    elements.stageVideo.classList.remove("hidden")
+    elements.stageVideo.controls = false
+    elements.stageVideo.muted = true
+    elements.stageVideo.srcObject = stream
+    try {
+      await elements.stageVideo.play()
+    } catch (_error) {
+    }
+  }
+
+  const buildCameraStream = async () => {
+    const cameraId = getSelectedDeviceId(elements.cameraDevice)
+    const micId = getSelectedDeviceId(elements.micDevice)
+
+    return navigator.mediaDevices.getUserMedia({
+      video: cameraId ? {deviceId: {exact: cameraId}} : true,
+      audio: micId ? {deviceId: {exact: micId}} : true,
+    })
+  }
+
+  const buildScreenStream = async () => {
+    const micId = getSelectedDeviceId(elements.micDevice)
+    const displayStream = await navigator.mediaDevices.getDisplayMedia({video: true, audio: true})
+
+    let micStream = null
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: micId ? {deviceId: {exact: micId}} : true,
+      })
+    } catch (_error) {
+      micStream = null
+    }
+
+    const combined = new MediaStream([
+      ...displayStream.getVideoTracks(),
+      ...displayStream.getAudioTracks(),
+      ...(micStream ? micStream.getAudioTracks() : []),
+    ])
+
+    const [videoTrack] = combined.getVideoTracks()
+    if (videoTrack) {
+      videoTrack.addEventListener("ended", () => {
+        if (state.status !== "recording" && state.status !== "paused") {
+          resetToIdle()
+        }
+      })
+    }
+
+    return combined
+  }
+
+  const setupSource = async source => {
+    if (state.status === "recording" || state.status === "paused") {
+      state.errorMessage = "Stop recording before switching sources."
+      await render()
+      return
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      state.status = "error"
+      state.errorMessage = "This browser does not support required media APIs."
+      await render()
+      return
+    }
+
+    stopPreviewStream()
+    state.source = source
+    state.status = "previewing"
+    state.seconds = 0
+    state.errorMessage = null
+    stopTimer()
+    await render()
+
+    try {
+      state.previewStream = source === "camera" ? await buildCameraStream() : await buildScreenStream()
+      await render()
+    } catch (error) {
+      state.status = "error"
+      state.errorMessage = `Could not start ${source} capture (${error.name || "permission denied"}).`
+      await render()
+    }
+  }
+
+  const handleRecordingStop = async () => {
+    const blob = new Blob(state.chunks, {type: state.recorder?.mimeType || "video/webm"})
+    state.chunks = []
+
+    if (blob.size > 0) {
+      const clipId = Date.now()
+      if (state.lastCapture?.url) {
+        URL.revokeObjectURL(state.lastCapture.url)
+      }
+
+      state.lastCapture = {
+        url: URL.createObjectURL(blob),
+        filename: `capture-${clipId}.webm`,
+        size: blob.size,
+      }
+
+      const sourceLabel = state.source === "screen" ? "Screen Capture" : "Camera Capture"
+      const clipRecord = {
+        id: clipId,
+        title: `${sourceLabel} ${new Date(clipId).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}`,
+        source: state.source || "camera",
+        duration_seconds: Math.max(1, state.seconds),
+        created_at: new Date(clipId).toISOString(),
+        size_bytes: blob.size,
+      }
+      const existing = loadStoredClips()
+      saveStoredClips([clipRecord, ...existing].slice(0, 100))
+    }
+
+    await resetToIdle()
+  }
+
+  const render = async () => {
     const timerText = formatTimer(state.seconds)
+    const hasSource = Boolean(state.source)
+    const hasPreviewStream = Boolean(state.previewStream)
 
     elements.stateBadge.textContent = `State: ${state.status}`
-    elements.sourceBadge.textContent = state.source
+    elements.sourceBadge.textContent = hasSource
       ? `Source: ${SOURCE_LABELS[state.source]}`
       : "Source: not selected"
     elements.timerBadge.textContent = `Timer: ${timerText}`
     elements.controlTimer.textContent = timerText
 
-    const hasSource = Boolean(state.source)
-    elements.sourceStatusBadge.textContent = hasSource ? "Source selected" : "Select a source first"
-    elements.sourceStatusBadge.classList.toggle("badge-success", hasSource)
-    elements.sourceStatusBadge.classList.toggle("badge-outline", true)
+    elements.sourceStatusBadge.textContent = state.status === "error"
+      ? "Capture error"
+      : hasSource
+        ? hasPreviewStream
+          ? "Source selected"
+          : "Awaiting browser permission"
+        : "Select a source first"
 
-    elements.cameraDevice.disabled = !hasSource
-    elements.micDevice.disabled = !hasSource
-    elements.controlHelp.textContent = hasSource
-      ? "Switch source at any time while not actively recording."
-      : "Select a capture source to unlock recording controls."
+    elements.sourceStatusBadge.classList.toggle("badge-success", hasPreviewStream)
+    elements.sourceStatusBadge.classList.toggle(
+      "badge-warning",
+      hasSource && !hasPreviewStream && state.status !== "error"
+    )
+    elements.sourceStatusBadge.classList.toggle("badge-error", state.status === "error")
 
-    selectSourceButtonStyles(state.source)
+    elements.cameraDevice.disabled = !hasSource || state.source !== "camera" || state.status === "recording"
+    elements.micDevice.disabled = !hasSource || state.status === "recording"
 
-    setButtonDisabled(elements.start, !(state.status === "previewing"))
+    setButtonDisabled(elements.start, !(state.status === "previewing" && hasPreviewStream))
     setButtonDisabled(elements.pause, !(state.status === "recording"))
     setButtonDisabled(elements.resume, !(state.status === "paused"))
     setButtonDisabled(elements.stop, !(state.status === "recording" || state.status === "paused"))
+    setButtonDisabled(elements.sourceClear, !hasSource || state.status === "recording" || state.status === "paused")
 
-    const canReview = state.mode === "playback" && state.selectedClipId !== null
-    ;[elements.clipRename, elements.clipDownload, elements.clipDelete].forEach(button => {
-      setButtonDisabled(button, !canReview)
-    })
-    setButtonDisabled(elements.clipRerecord, !hasSource)
-
-    elements.tabPreview.classList.toggle("tab-active", state.mode === "preview")
-    elements.tabPlayback.classList.toggle("tab-active", state.mode === "playback")
-
-    if (state.mode === "playback") {
-      setStagePlayback()
+    if (state.status === "idle") {
+      setStageImage(
+        STAGE_IMAGES.idle,
+        "Choose a source to begin previewing.",
+        "This page is dedicated to capture only. Manage clips in Media Library."
+      )
+    } else if (state.status === "error") {
+      const fallback = state.source === "screen" ? STAGE_IMAGES.preview_screen : STAGE_IMAGES.preview_camera
+      setStageImage(
+        fallback,
+        "Capture could not start.",
+        "Check permissions and try selecting source again."
+      )
+    } else if (hasPreviewStream) {
+      await setLivePreview(state.previewStream)
+      elements.stageTitle.textContent = state.source === "camera"
+        ? "Live camera preview ready."
+        : "Desktop/application preview ready."
+      elements.stageCaption.textContent = "Use Start Recording when you are ready."
     } else {
-      setStagePreview()
+      const waiting = state.source === "screen" ? STAGE_IMAGES.preview_screen : STAGE_IMAGES.preview_camera
+      setStageImage(waiting, "Waiting for source permission.", "Approve browser permission prompt to continue.")
     }
 
-    renderClips()
+    elements.controlHelp.textContent = state.errorMessage || (hasSource
+      ? hasPreviewStream
+        ? "Recording stays on this page only. Open Media Library for future persisted clips."
+        : "Waiting for permission to access your selected source."
+      : "Select a capture source to unlock recording controls.")
+
+    if (state.lastCapture) {
+      const mb = (state.lastCapture.size / (1024 * 1024)).toFixed(2)
+      elements.lastCaptureNote.textContent = `Last capture ready in browser memory (${mb} MB).`
+      setButtonDisabled(elements.lastDownload, false)
+    } else {
+      elements.lastCaptureNote.textContent = "No captures in memory yet."
+      setButtonDisabled(elements.lastDownload, true)
+    }
   }
 
-  elements.sourceCamera.addEventListener("click", () => {
-    state.source = "camera"
-    state.status = "previewing"
-    state.mode = "preview"
-    stopTimer()
-    state.seconds = 0
-    render()
+  elements.sourceCamera.addEventListener("click", () => setupSource("camera"))
+  elements.sourceScreen.addEventListener("click", () => setupSource("screen"))
+
+  elements.sourceClear.addEventListener("click", () => resetToIdle())
+
+  elements.cameraDevice.addEventListener("change", () => {
+    if (state.source === "camera" && state.status !== "recording" && state.status !== "paused") {
+      setupSource("camera")
+    }
   })
 
-  elements.sourceScreen.addEventListener("click", () => {
-    state.source = "screen"
-    state.status = "previewing"
-    state.mode = "preview"
-    stopTimer()
-    state.seconds = 0
-    render()
+  elements.micDevice.addEventListener("change", () => {
+    if (state.source && state.status !== "recording" && state.status !== "paused") {
+      setupSource(state.source)
+    }
   })
 
-  elements.start.addEventListener("click", () => {
-    if (state.status !== "previewing") return
+  elements.start.addEventListener("click", async () => {
+    if (!(state.status === "previewing" && state.previewStream)) return
+
+    const mimeType = findSupportedMimeType()
+    state.chunks = []
+    state.recorder = new MediaRecorder(state.previewStream, {mimeType})
+
+    state.recorder.addEventListener("dataavailable", event => {
+      if (event.data?.size > 0) {
+        state.chunks.push(event.data)
+      }
+    })
+
+    state.recorder.addEventListener("stop", () => {
+      handleRecordingStop()
+    })
+
+    state.seconds = 0
     state.status = "recording"
-    state.mode = "preview"
-    state.seconds = 0
+    state.errorMessage = null
+    state.recorder.start(1000)
     startTimer()
-    render()
+    await render()
   })
 
-  elements.pause.addEventListener("click", () => {
-    if (state.status !== "recording") return
+  elements.pause.addEventListener("click", async () => {
+    if (state.status !== "recording" || !state.recorder) return
+    state.recorder.pause()
     state.status = "paused"
     stopTimer()
-    render()
+    await render()
   })
 
-  elements.resume.addEventListener("click", () => {
-    if (state.status !== "paused") return
+  elements.resume.addEventListener("click", async () => {
+    if (state.status !== "paused" || !state.recorder) return
+    state.recorder.resume()
     state.status = "recording"
     startTimer()
-    render()
+    await render()
   })
 
-  elements.stop.addEventListener("click", () => {
-    if (!(state.status === "recording" || state.status === "paused")) return
+  elements.stop.addEventListener("click", async () => {
+    if (!(state.status === "recording" || state.status === "paused") || !state.recorder) return
     stopTimer()
-    const clip = {
-      id: Date.now(),
-      title: `Clip ${String(state.clips.length + 1).padStart(2, "0")}`,
-      source: state.source || "camera",
-      duration: Math.max(5, state.seconds),
-      at: formatClockTime(new Date()),
-    }
-    state.clips = [clip, ...state.clips]
-    state.selectedClipId = clip.id
-    state.seconds = 0
-    state.status = "reviewing"
-    state.mode = "playback"
-    render()
+    stopRecorderIfNeeded()
+    state.status = "idle"
+    await render()
   })
 
-  elements.tabPreview.addEventListener("click", () => {
-    state.mode = "preview"
-    if (state.source && !["recording", "paused"].includes(state.status)) {
-      state.status = "previewing"
-    }
-    render()
+  elements.lastDownload.addEventListener("click", () => {
+    if (!state.lastCapture?.url) return
+    const link = document.createElement("a")
+    link.href = state.lastCapture.url
+    link.download = state.lastCapture.filename
+    link.click()
   })
 
-  elements.tabPlayback.addEventListener("click", () => {
-    state.mode = "playback"
-    if (state.selectedClipId) {
-      state.status = "reviewing"
-    }
-    render()
-  })
-
-  elements.clipRerecord.addEventListener("click", () => {
-    if (!state.source) return
-    state.status = "previewing"
-    state.mode = "preview"
-    state.selectedClipId = null
+  window.addEventListener("beforeunload", () => {
     stopTimer()
-    state.seconds = 0
-    render()
+    stopRecorderIfNeeded()
+    stopPreviewStream()
+    if (state.lastCapture?.url) {
+      URL.revokeObjectURL(state.lastCapture.url)
+    }
   })
-
-  elements.clipDelete.addEventListener("click", () => {
-    if (!state.selectedClipId) return
-    state.clips = state.clips.filter(clip => clip.id !== state.selectedClipId)
-    state.selectedClipId = state.clips[0]?.id || null
-    state.mode = state.selectedClipId ? "playback" : "preview"
-    state.status = state.selectedClipId ? "reviewing" : (state.source ? "previewing" : "idle")
-    render()
-  })
-
-  window.addEventListener("beforeunload", stopTimer)
 
   render()
 }
 
 document.addEventListener("DOMContentLoaded", initRecordStudio)
-
 document.addEventListener("phx:page-loading-stop", initRecordStudio)

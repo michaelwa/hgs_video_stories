@@ -2,26 +2,32 @@
 
 ## Now (Build Next)
 
-- [ ] Implement a single state-driven `Capture + Recording Control` flow.
+- [x] Split app surfaces into dedicated pages.
+  - `/record` is now capture-focused.
+  - `/media` is now a dedicated library management surface.
+
+- [x] Implement a single state-driven `Capture + Recording Control` flow.
   - Define explicit UI/logic states: `idle`, `previewing`, `recording`, `paused`, `reviewing`, `error`.
   - Only show record/pause/resume/stop controls after a capture source is selected.
   - Keep source switching in the same control area, with clear "current source" vs "switch source" indicators.
 
-- [ ] Build one shared `Preview / Playback Stage` for both live capture and clip review.
-  - Use one media surface for live camera/screen preview and selected clip playback.
-  - Add a clear mode switch (preview vs playback) so users always know what they are seeing.
-  - Keep clip actions (rename/download/re-record/delete) adjacent to this stage.
+- [x] Keep `/record` focused on live capture preview only.
+  - The recording page now avoids library/review complexity.
+  - Clip management concerns moved to `/media`.
 
-- [ ] Keep `Clip Library` as the selection surface, and tie it directly to stage playback.
-  - Selecting a clip should activate playback mode in the shared stage.
-  - Selecting "re-record" should switch back to preview mode and preserve source/device settings when possible.
+- [ ] Wire `/record` output into `/media` library data.
+  - Persist recorded clips server-side instead of in-memory blob URLs.
+  - Render real clip records in `/media` and support true preview/download/delete flows.
+  - Current implementation note: `/record` now writes clip metadata to browser `localStorage`, and `/media` reads that metadata to exit empty state.
 
 ## Next (After UI State Wiring)
 
-- [ ] Implement capture from both camera/mic and desktop/app.
+- [x] Implement capture from both camera/mic and desktop/app.
   - Camera/mic via `getUserMedia`.
   - Screen/app via `getDisplayMedia` with optional microphone merge.
   - Provide clear fallback messaging for permission denial, missing devices, and unsupported browser features.
+  - Current implementation note: done as a client-side prototype in `assets/js/record_studio_stub.js` using `getUserMedia`, `getDisplayMedia`, and `MediaRecorder`.
+  - Current implementation note: includes explicit `Turn Off Capture` control and automatic preview stream shutdown when switching into playback mode.
 
 - [ ] Confirm and implement server-ingest-first architecture for recordings.
   - Stream/chunk recordings directly to backend ingest rather than relying on local disk save.

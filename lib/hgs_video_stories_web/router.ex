@@ -19,6 +19,7 @@ defmodule HgsVideoStoriesWeb.Router do
 
     get "/", PageController, :home
     get "/record", PageController, :record
+    get "/media", PageController, :media
     live "/counter_live_group", GroupCounterLive
   end
 

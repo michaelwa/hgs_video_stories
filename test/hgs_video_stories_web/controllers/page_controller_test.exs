@@ -10,4 +10,9 @@ defmodule HgsVideoStoriesWeb.PageControllerTest do
     conn = get(conn, ~p"/record")
     assert html_response(conn, 200)
   end
+
+  test "GET /media", %{conn: conn} do
+    conn = get(conn, ~p"/media")
+    assert html_response(conn, 200) =~ "Media Management"
+  end
 end

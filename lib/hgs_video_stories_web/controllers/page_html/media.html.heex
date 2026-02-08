@@ -1,0 +1,143 @@
+<Layouts.flash_group flash={@flash} />
+<div
+  id="media-library-page"
+  class="min-h-screen bg-gradient-to-b from-base-200 via-base-100 to-base-200 text-base-content"
+>
+  <header class="border-b border-base-300/90 bg-base-100/90 backdrop-blur">
+    <div class="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <a href={~p"/"} id="app-logo" class="inline-flex items-center gap-3">
+        <img src={~p"/images/logo.svg"} width="32" alt="HGS Video Stories logo" />
+        <span class="text-sm font-semibold tracking-[0.2em]">HGS VIDEO STORIES</span>
+      </a>
+
+      <div class="hidden items-center gap-3 md:flex">
+        <details id="desktop-profile-menu" class="dropdown dropdown-end">
+          <summary class="btn btn-ghost gap-3 rounded-full px-2 normal-case">
+            <img
+              src={~p"/images/avatar-placeholder.svg"}
+              alt="Profile photo"
+              class="size-9 rounded-full object-cover"
+            />
+            <span class="text-sm font-medium">Jordan Lee</span>
+            <.icon name="hero-chevron-down-mini" class="size-4 opacity-70" />
+          </summary>
+          <ul class="menu dropdown-content z-50 mt-3 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+            <li><a href="#">Account settings</a></li>
+            <li><a href="#">Billing</a></li>
+            <li><a href="#">Sign out</a></li>
+          </ul>
+        </details>
+      </div>
+
+      <div class="md:hidden">
+        <details id="mobile-profile-menu" class="dropdown dropdown-end">
+          <summary class="btn btn-ghost btn-circle" aria-label="Open account menu">
+            <.icon name="hero-bars-3" class="size-6" />
+          </summary>
+          <ul class="menu dropdown-content z-50 mt-3 w-64 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+            <li class="menu-title px-2 py-1">
+              <span class="flex items-center gap-2">
+                <img
+                  src={~p"/images/avatar-placeholder.svg"}
+                  alt="Profile photo"
+                  class="size-7 rounded-full object-cover"
+                />
+                <span>Jordan Lee</span>
+              </span>
+            </li>
+            <li><a href="#">Account settings</a></li>
+            <li><a href="#">Billing</a></li>
+            <li><a href="#">Sign out</a></li>
+          </ul>
+        </details>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+    <div class="mb-6">
+      <div class="tabs tabs-box w-fit bg-base-100 p-1 text-sm shadow-sm">
+        <a href={~p"/media"} class="tab tab-active">Media Library</a>
+        <a href={~p"/record"} class="tab">Recording</a>
+      </div>
+    </div>
+
+    <section class="mb-6 rounded-2xl border border-base-300 bg-base-100/80 p-4 shadow-sm">
+      <h1 class="text-xl font-semibold">Media Management</h1>
+      <p class="mt-1 text-sm text-base-content/70">
+        Manage previously recorded clips, review metadata, and prepare assets for publishing.
+      </p>
+    </section>
+
+    <section
+      id="media-empty-state"
+      class="rounded-3xl border border-dashed border-base-300 bg-base-100/70 p-10 shadow-sm sm:p-14"
+    >
+      <div class="mx-auto flex max-w-xl flex-col items-center text-center">
+        <div class="flex size-14 items-center justify-center rounded-2xl border border-base-300 bg-base-100">
+          <.icon name="hero-plus" class="size-7 text-base-content/70" />
+        </div>
+        <h2 class="mt-5 text-2xl font-semibold">Add your first video or screen capture</h2>
+        <p class="mt-2 text-sm text-base-content/70">
+          Your media library is empty. Record from camera or desktop to create your first clip.
+        </p>
+        <a href={~p"/record"} class="btn btn-primary mt-6">Go to Recording</a>
+      </div>
+    </section>
+
+    <section id="media-populated-state" class="hidden">
+      <div class="grid gap-6 xl:grid-cols-12">
+        <aside class="space-y-4 xl:col-span-4">
+          <article class="rounded-3xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
+            <h2 class="text-lg font-semibold">Captured Clips</h2>
+            <p class="mt-1 text-sm text-base-content/70">
+              Recent captures from the recording page.
+            </p>
+            <ul id="media-clip-list" class="mt-4 space-y-3"></ul>
+          </article>
+        </aside>
+
+        <section class="space-y-6 xl:col-span-8">
+          <article class="rounded-3xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
+            <h2 id="media-selected-title" class="text-lg font-semibold">Selected clip</h2>
+            <div class="mt-4 rounded-2xl border border-base-300 bg-base-200 p-4">
+              <img
+                src={~p"/images/studio-playback.svg"}
+                alt="Clip preview placeholder"
+                class="w-full rounded-xl object-cover"
+              />
+            </div>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <button class="btn btn-sm btn-outline" disabled>Rename</button>
+              <button class="btn btn-sm btn-outline" disabled>Download</button>
+              <button class="btn btn-sm btn-outline" disabled>Duplicate</button>
+              <button class="btn btn-sm btn-error btn-outline" disabled>Delete</button>
+            </div>
+          </article>
+
+          <article class="rounded-3xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
+            <h2 class="text-lg font-semibold">Metadata</h2>
+            <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div class="rounded-xl border border-base-300 bg-base-200/60 p-3">
+                <dt class="text-base-content/65">Source</dt>
+                <dd id="media-meta-source" class="font-medium">-</dd>
+              </div>
+              <div class="rounded-xl border border-base-300 bg-base-200/60 p-3">
+                <dt class="text-base-content/65">Duration</dt>
+                <dd id="media-meta-duration" class="font-medium">-</dd>
+              </div>
+              <div class="rounded-xl border border-base-300 bg-base-200/60 p-3">
+                <dt class="text-base-content/65">Created</dt>
+                <dd id="media-meta-created" class="font-medium">-</dd>
+              </div>
+              <div class="rounded-xl border border-base-300 bg-base-200/60 p-3">
+                <dt class="text-base-content/65">Size</dt>
+                <dd id="media-meta-size" class="font-medium">-</dd>
+              </div>
+            </dl>
+          </article>
+        </section>
+      </div>
+    </section>
+  </main>
+</div>
