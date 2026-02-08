@@ -15,10 +15,11 @@
   - The recording page now avoids library/review complexity.
   - Clip management concerns moved to `/media`.
 
-- [ ] Wire `/record` output into `/media` library data.
-  - Persist recorded clips server-side instead of in-memory blob URLs.
-  - Render real clip records in `/media` and support true preview/download/delete flows.
-  - Current implementation note: `/record` now writes clip metadata to browser `localStorage`, and `/media` reads that metadata to exit empty state.
+- [x] Wire `/record` output into `/media` library data.
+  - `/record` now writes each completed clip (metadata + blob) into browser `IndexedDB`.
+  - `/media` reads persisted records, shows true clip preview playback, and supports download/delete for selected clips.
+  - Current implementation note: this is browser-local persistence only; records are available across page navigation/reload on the same browser profile.
+  - Current implementation note: `/media` now also provides a manual "Save to Server" option per clip, while keeping browser-local copies.
 
 ## Next (After UI State Wiring)
 
@@ -33,6 +34,7 @@
   - Stream/chunk recordings directly to backend ingest rather than relying on local disk save.
   - Replace any "upload/save" UX with ingest/processing status (for example: chunk ingest, transcode, transcript readiness).
   - Keep "download clip" as an explicit user action only.
+  - Current implementation note: today this is a single-shot clip upload endpoint (`POST /api/media_clips`) used by the manual save action.
 
 ## Later (Auth Integration / Polish)
 
@@ -43,4 +45,5 @@
 - [ ] Add production-level resiliency and UX polish.
   - Handle device hot-swap/disconnect while previewing or recording.
   - Add browser compatibility messaging and guided recovery actions.
+  - Add storage quota awareness via `navigator.storage.estimate()` and warn users before long recordings when local IndexedDB capacity is low.
   - Add lightweight analytics around source selection, record success/failure, and drop-off points.

@@ -29,6 +29,7 @@ defmodule HgsVideoStoriesWeb.Router do
     get "/server_count", ServerCountController, :show
     post "/server_count/increment", ServerCountController, :increment
     post "/server_count/decrement", ServerCountController, :decrement
+    post "/media_clips", MediaClipController, :create
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development

@@ -1,9 +1,10 @@
+import {addClipToStore, supportsPersistentClipStore} from "./media_clip_store"
+
 const STAGE_IMAGES = {
   idle: "/images/studio-idle.svg",
   preview_camera: "/images/studio-preview-camera.svg",
   preview_screen: "/images/studio-preview-screen.svg",
 }
-const MEDIA_LIBRARY_KEY = "hgs_video_stories_media_clips"
 
 const SOURCE_LABELS = {
   camera: "camera + mic",
@@ -24,18 +25,6 @@ const findSupportedMimeType = () => {
   ]
 
   return candidates.find(type => MediaRecorder.isTypeSupported(type)) || "video/webm"
-}
-
-const loadStoredClips = () => {
-  try {
-    return JSON.parse(localStorage.getItem(MEDIA_LIBRARY_KEY) || "[]")
-  } catch (_error) {
-    return []
-  }
-}
-
-const saveStoredClips = clips => {
-  localStorage.setItem(MEDIA_LIBRARY_KEY, JSON.stringify(clips))
 }
 
 const initRecordStudio = () => {
@@ -263,8 +252,14 @@ const initRecordStudio = () => {
         created_at: new Date(clipId).toISOString(),
         size_bytes: blob.size,
       }
-      const existing = loadStoredClips()
-      saveStoredClips([clipRecord, ...existing].slice(0, 100))
+      if (supportsPersistentClipStore()) {
+        await addClipToStore({
+          ...clipRecord,
+          blob,
+        })
+      } else {
+        state.errorMessage = "Clip recorded, but this browser cannot persist clips for Media Library."
+      }
     }
 
     await resetToIdle()
@@ -332,7 +327,7 @@ const initRecordStudio = () => {
 
     elements.controlHelp.textContent = state.errorMessage || (hasSource
       ? hasPreviewStream
-        ? "Recording stays on this page only. Open Media Library for future persisted clips."
+        ? "Recorded clips are available in Media Library."
         : "Waiting for permission to access your selected source."
       : "Select a capture source to unlock recording controls.")
 
