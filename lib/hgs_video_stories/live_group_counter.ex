@@ -1,9 +1,9 @@
-defmodule HgsVideoStories.GroupCounter do
+defmodule HgsVideoStories.LiveGroupCounter do
   @moduledoc false
 
   use GenServer
 
-  @topic "group_counter:lobby"
+  @topic "live_group_counter:lobby"
   @max_log_entries 40
 
   @type snapshot :: %{
@@ -65,6 +65,7 @@ defmodule HgsVideoStories.GroupCounter do
 
     snapshot = snapshot(new_state)
     broadcast_update(snapshot)
+
     {:reply, snapshot, new_state}
   end
 
@@ -93,6 +94,7 @@ defmodule HgsVideoStories.GroupCounter do
 
         snapshot = snapshot(new_state)
         broadcast_update(snapshot)
+
         {:reply, snapshot, new_state}
     end
   end
@@ -115,6 +117,7 @@ defmodule HgsVideoStories.GroupCounter do
 
         snapshot = snapshot(new_state)
         broadcast_update(snapshot)
+
         {:reply, snapshot, new_state}
     end
   end
@@ -129,10 +132,7 @@ defmodule HgsVideoStories.GroupCounter do
   end
 
   defp snapshot(state) do
-    users =
-      state.users
-      |> Map.values()
-      |> Enum.sort_by(&String.downcase(&1.name))
+    users = state.users |> Map.values() |> Enum.sort_by(&String.downcase(&1.name))
 
     %{
       user_count: map_size(state.users),
@@ -146,7 +146,7 @@ defmodule HgsVideoStories.GroupCounter do
     Phoenix.PubSub.broadcast(
       HgsVideoStories.PubSub,
       @topic,
-      {:group_counter_updated, snapshot}
+      {:live_group_counter_updated, snapshot}
     )
   end
 end

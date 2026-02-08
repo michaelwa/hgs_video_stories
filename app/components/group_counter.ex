@@ -52,6 +52,10 @@ defmodule HgsVideoStories.Hologram.Components.GroupCounter do
         </div>
       </div>
 
+      <button id="group-counter-refresh-trigger" class="hidden" $click={:refresh_group_from_server}>
+        Refresh
+      </button>
+
       {%if !@joined}
         <form id="group-counter-join-form" class="flex flex-wrap gap-3" $submit={:submit_join}>
           <input
@@ -175,6 +179,10 @@ defmodule HgsVideoStories.Hologram.Components.GroupCounter do
     component
     |> put_state(joined: false, join_error: nil)
     |> apply_snapshot(snapshot)
+  end
+
+  def action(:refresh_group_from_server, _params, component) do
+    put_command(component, :fetch_group_snapshot)
   end
 
   def command(:join_group, %{name: name}, server) do

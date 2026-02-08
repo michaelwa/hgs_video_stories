@@ -16,6 +16,7 @@ defmodule HgsVideoStories.Application do
       {Phoenix.PubSub, name: HgsVideoStories.PubSub},
       HgsVideoStories.ServerCounter,
       HgsVideoStories.GroupCounter,
+      HgsVideoStories.LiveGroupCounter,
       # Start a worker by calling: HgsVideoStories.Worker.start_link(arg)
       # {HgsVideoStories.Worker, arg},
       # Start to serve requests, typically the last entry
