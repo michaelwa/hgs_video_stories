@@ -4,6 +4,7 @@ import {uploadClipToServer} from "./media_clip_ingest"
 const STAGE_IMAGES = {
   idle: "/images/studio-idle.svg",
   preview_camera: "/images/studio-preview-camera.svg",
+  preview_mic: "/images/studio-preview-mic.svg",
   preview_screen: "/images/studio-preview-screen.svg",
 }
 
@@ -11,8 +12,24 @@ const GLOBAL_CLEANUP_KEY = "__recordStudioCleanup"
 
 const SOURCE_LABELS = {
   camera: "camera + mic",
+  camera_only: "camera only",
+  mic_only: "mic only",
   screen: "screen / app",
+  screen_only: "screen only",
 }
+
+const DEFAULT_DEVICE_IDS = new Set(["default", "communications"])
+const CAMERA_OFF_VALUE = "__camera_off__"
+const MICROPHONE_OFF_VALUE = "__mic_off__"
+const CAMERA_MODES = new Set(["camera", "camera_only"])
+const SCREEN_MODES = new Set(["screen", "screen_only"])
+const MICROPHONE_MODES = new Set(["camera", "screen", "mic_only"])
+const MIC_ONLY_MODES = new Set(["mic_only"])
+const DEFAULT_STAGE_FRAME_CLASSES = ["h-52", "sm:h-80", "lg:h-[26rem]"]
+const AUDIO_STAGE_FRAME_CLASSES = ["h-36", "sm:h-48", "lg:h-56"]
+
+const modeUsesCamera = mode => CAMERA_MODES.has(mode)
+const modeUsesMicrophone = mode => MICROPHONE_MODES.has(mode)
 
 const formatTimer = totalSeconds => {
   const minutes = Math.floor(totalSeconds / 60)
@@ -46,31 +63,26 @@ const initRecordStudio = () => {
     sourceBadge: document.getElementById("studio-source-badge"),
     timerBadge: document.getElementById("studio-timer-badge"),
     ingestBadge: document.getElementById("studio-ingest-badge"),
-    sourceStatusBadge: document.getElementById("source-status-badge"),
     captureMode: document.getElementById("capture-mode"),
-    sourceClear: document.getElementById("source-clear"),
     cameraDevice: document.getElementById("camera-device"),
     micDevice: document.getElementById("microphone-device"),
     start: document.getElementById("record-start"),
     pause: document.getElementById("record-pause"),
     resume: document.getElementById("record-resume"),
     stop: document.getElementById("record-stop"),
-    toggleCamera: document.getElementById("toggle-camera"),
-    toggleMicrophone: document.getElementById("toggle-microphone"),
-    toggleCameraLabel: document.getElementById("toggle-camera-label"),
-    toggleMicrophoneLabel: document.getElementById("toggle-microphone-label"),
     recordControlsGroup: document.getElementById("record-controls-group"),
-    recordControlsLockedNote: document.getElementById("record-controls-locked-note"),
     controlTimer: document.getElementById("record-control-timer"),
-    controlHelp: document.getElementById("control-help"),
+    captureFeedbackPanel: document.getElementById("capture-feedback-panel"),
+    lastCapturePanel: document.getElementById("last-capture-panel"),
+    stageFrame: document.getElementById("stage-frame"),
     stageVideo: document.getElementById("stage-video"),
     stageImage: document.getElementById("stage-image"),
+    stageAudioWave: document.getElementById("stage-audio-wave"),
     stageTitle: document.getElementById("stage-title"),
     stageCaption: document.getElementById("stage-caption"),
     lastCaptureNote: document.getElementById("last-capture-note"),
     lastDownload: document.getElementById("last-download"),
     ingestStatusNote: document.getElementById("ingest-status-note"),
-    ingestServerLink: document.getElementById("ingest-server-link"),
   }
 
   if (!elements.stateBadge) return
@@ -94,8 +106,12 @@ const initRecordStudio = () => {
     ingestStatus: "idle",
     ingestMessage: null,
     ingestServerUrl: null,
-    cameraEnabled: true,
-    microphoneEnabled: true,
+    audioContext: null,
+    audioWaveRef: null,
+    audioSourceNode: null,
+    audioAnalyser: null,
+    audioWaveMode: "level",
+    audioWaveHistory: [],
   }
 
   const setButtonDisabled = (button, disabled) => {
@@ -106,10 +122,126 @@ const initRecordStudio = () => {
 
   const getSelectedDeviceId = selectElement => {
     const value = selectElement.value
-    if (value === "" || ["cam-1", "cam-2", "mic-1", "mic-2"].includes(value)) {
+    if (value === "" || value === CAMERA_OFF_VALUE || value === MICROPHONE_OFF_VALUE) {
       return undefined
     }
     return value
+  }
+
+  const setSelectOptions = (selectElement, {options, defaultLabel, unavailableLabel, offLabel, offValue}) => {
+    const previousValue = selectElement.value
+    selectElement.replaceChildren()
+
+    if (offLabel && offValue) {
+      selectElement.appendChild(new Option(offLabel, offValue))
+    }
+
+    const defaultOption = new Option(options.length === 0 ? unavailableLabel : defaultLabel, "")
+    selectElement.appendChild(defaultOption)
+
+    options.forEach(option => {
+      selectElement.appendChild(new Option(option.label, option.value))
+    })
+
+    if (previousValue === offValue) {
+      selectElement.value = offValue
+      return
+    }
+
+    const canRestorePreviousValue = options.some(option => option.value === previousValue)
+    selectElement.value = canRestorePreviousValue ? previousValue : ""
+  }
+
+  const ensureControlValue = (selectElement, offValue) => {
+    if (selectElement.value === offValue) {
+      selectElement.value = ""
+    }
+  }
+
+  const syncDeviceControlsForMode = mode => {
+    if (!mode || mode === "off") {
+      elements.cameraDevice.value = CAMERA_OFF_VALUE
+      elements.micDevice.value = MICROPHONE_OFF_VALUE
+      return
+    }
+
+    if (modeUsesCamera(mode)) {
+      ensureControlValue(elements.cameraDevice, CAMERA_OFF_VALUE)
+    } else {
+      elements.cameraDevice.value = CAMERA_OFF_VALUE
+    }
+
+    if (modeUsesMicrophone(mode)) {
+      ensureControlValue(elements.micDevice, MICROPHONE_OFF_VALUE)
+    } else {
+      elements.micDevice.value = MICROPHONE_OFF_VALUE
+    }
+  }
+
+  const refreshDeviceOptions = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setSelectOptions(elements.cameraDevice, {
+        options: [],
+        defaultLabel: "System default camera",
+        unavailableLabel: "Camera enumeration unavailable",
+        offLabel: "Camera Off",
+        offValue: CAMERA_OFF_VALUE,
+      })
+      setSelectOptions(elements.micDevice, {
+        options: [],
+        defaultLabel: "System default microphone",
+        unavailableLabel: "Microphone enumeration unavailable",
+        offLabel: "Microphone Off",
+        offValue: MICROPHONE_OFF_VALUE,
+      })
+      return
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const cameraOptions = devices
+        .filter(device => device.kind === "videoinput" && !DEFAULT_DEVICE_IDS.has(device.deviceId))
+        .map((device, index) => ({
+          value: device.deviceId,
+          label: device.label || `Camera ${index + 1}`,
+        }))
+      const microphoneOptions = devices
+        .filter(device => device.kind === "audioinput" && !DEFAULT_DEVICE_IDS.has(device.deviceId))
+        .map((device, index) => ({
+          value: device.deviceId,
+          label: device.label || `Microphone ${index + 1}`,
+        }))
+
+      setSelectOptions(elements.cameraDevice, {
+        options: cameraOptions,
+        defaultLabel: "System default camera",
+        unavailableLabel: "No camera detected",
+        offLabel: "Camera Off",
+        offValue: CAMERA_OFF_VALUE,
+      })
+      setSelectOptions(elements.micDevice, {
+        options: microphoneOptions,
+        defaultLabel: "System default microphone",
+        unavailableLabel: "No microphone detected",
+        offLabel: "Microphone Off",
+        offValue: MICROPHONE_OFF_VALUE,
+      })
+    } catch (_error) {
+      setSelectOptions(elements.cameraDevice, {
+        options: [],
+        defaultLabel: "System default camera",
+        unavailableLabel: "Could not read cameras",
+        offLabel: "Camera Off",
+        offValue: CAMERA_OFF_VALUE,
+      })
+      setSelectOptions(elements.micDevice, {
+        options: [],
+        defaultLabel: "System default microphone",
+        unavailableLabel: "Could not read microphones",
+        offLabel: "Microphone Off",
+        offValue: MICROPHONE_OFF_VALUE,
+      })
+    }
   }
 
   const stopTimer = () => {
@@ -136,21 +268,156 @@ const initRecordStudio = () => {
     elements.stageVideo.load()
   }
 
-  const stopPreviewStream = () => {
-    if (!state.previewStream) return
-    state.previewStream.getTracks().forEach(track => track.stop())
-    state.previewStream = null
-    stopPlayback()
+  const setStageFrameMode = micOnly => {
+    const removeClasses = micOnly ? DEFAULT_STAGE_FRAME_CLASSES : AUDIO_STAGE_FRAME_CLASSES
+    const addClasses = micOnly ? AUDIO_STAGE_FRAME_CLASSES : DEFAULT_STAGE_FRAME_CLASSES
+    elements.stageFrame?.classList.remove(...removeClasses)
+    elements.stageFrame?.classList.add(...addClasses)
   }
 
-  const applyTrackEnabledState = () => {
-    if (!state.previewStream) return
-    state.previewStream.getVideoTracks().forEach(track => {
-      track.enabled = state.cameraEnabled
-    })
-    state.previewStream.getAudioTracks().forEach(track => {
-      track.enabled = state.microphoneEnabled
-    })
+  const stopAudioWavePreview = () => {
+    if (state.audioWaveRef) {
+      cancelAnimationFrame(state.audioWaveRef)
+      state.audioWaveRef = null
+    }
+
+    if (state.audioSourceNode) {
+      state.audioSourceNode.disconnect()
+      state.audioSourceNode = null
+    }
+
+    state.audioAnalyser = null
+    state.audioWaveHistory = []
+
+    if (state.audioContext) {
+      state.audioContext.close().catch(() => {})
+      state.audioContext = null
+    }
+
+    if (elements.stageAudioWave) {
+      elements.stageAudioWave.classList.add("hidden")
+      const ctx = elements.stageAudioWave.getContext("2d")
+      if (ctx) {
+        ctx.clearRect(0, 0, elements.stageAudioWave.width, elements.stageAudioWave.height)
+      }
+    }
+  }
+
+  const startAudioWavePreview = stream => {
+    if (!elements.stageAudioWave) return
+
+    const tracks = stream.getAudioTracks()
+    if (tracks.length === 0) {
+      stopAudioWavePreview()
+      return
+    }
+
+    if (state.audioAnalyser && state.audioContext && state.audioSourceNode) {
+      elements.stageAudioWave.classList.remove("hidden")
+      return
+    }
+
+    stopAudioWavePreview()
+    elements.stageAudioWave.classList.remove("hidden")
+
+    const canvas = elements.stageAudioWave
+    const ctx = canvas.getContext("2d")
+    if (!ctx || !window.AudioContext) return
+
+    const audioContext = new AudioContext()
+    const audioStream = new MediaStream(tracks)
+    const sourceNode = audioContext.createMediaStreamSource(audioStream)
+    const analyser = audioContext.createAnalyser()
+    analyser.fftSize = 2048
+    sourceNode.connect(analyser)
+
+    state.audioContext = audioContext
+    state.audioSourceNode = sourceNode
+    state.audioAnalyser = analyser
+    state.audioWaveHistory = []
+
+    const data = new Uint8Array(analyser.fftSize)
+    const draw = () => {
+      if (!state.audioAnalyser || !elements.stageAudioWave) return
+
+      const rect = canvas.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      const nextWidth = Math.max(1, Math.floor(rect.width * dpr))
+      const nextHeight = Math.max(1, Math.floor(rect.height * dpr))
+      if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+        canvas.width = nextWidth
+        canvas.height = nextHeight
+      }
+
+      state.audioAnalyser.getByteTimeDomainData(data)
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.fillStyle = "rgba(15, 23, 42, 0.15)"
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+      if (state.audioWaveMode === "timeline") {
+        let peak = 0
+        for (let i = 0; i < data.length; i += 1) {
+          const sample = Math.abs(data[i] - 128)
+          if (sample > peak) peak = sample
+        }
+
+        const normalized = peak / 128
+        const historyMax = Math.max(30, Math.floor(canvas.width / 3))
+        state.audioWaveHistory.push(normalized)
+        if (state.audioWaveHistory.length > historyMax) {
+          state.audioWaveHistory.shift()
+        }
+
+        ctx.lineWidth = Math.max(2, Math.floor(dpr * 2))
+        ctx.strokeStyle = "rgba(56, 189, 248, 0.95)"
+        ctx.beginPath()
+        const step = canvas.width / Math.max(1, historyMax - 1)
+        for (let i = 0; i < state.audioWaveHistory.length; i += 1) {
+          const amplitude = state.audioWaveHistory[i]
+          const y = canvas.height / 2 - amplitude * (canvas.height * 0.42)
+          const x = i * step
+          if (i === 0) {
+            ctx.moveTo(x, y)
+          } else {
+            ctx.lineTo(x, y)
+          }
+        }
+        ctx.stroke()
+      } else {
+        ctx.lineWidth = Math.max(2, Math.floor(dpr * 2))
+        ctx.strokeStyle = "rgba(56, 189, 248, 0.95)"
+        ctx.beginPath()
+
+        const sliceWidth = canvas.width / data.length
+        let x = 0
+        for (let i = 0; i < data.length; i += 1) {
+          const value = data[i] / 255
+          const y = value * canvas.height
+          if (i === 0) {
+            ctx.moveTo(x, y)
+          } else {
+            ctx.lineTo(x, y)
+          }
+          x += sliceWidth
+        }
+
+        ctx.lineTo(canvas.width, canvas.height / 2)
+        ctx.stroke()
+      }
+
+      state.audioWaveRef = requestAnimationFrame(draw)
+    }
+
+    draw()
+  }
+
+  const stopPreviewStream = () => {
+    if (state.previewStream) {
+      state.previewStream.getTracks().forEach(track => track.stop())
+      state.previewStream = null
+    }
+    stopAudioWavePreview()
+    stopPlayback()
   }
 
   const stopRecorderIfNeeded = () => {
@@ -168,21 +435,29 @@ const initRecordStudio = () => {
     state.status = "idle"
     state.seconds = 0
     state.errorMessage = null
-    state.cameraEnabled = true
-    state.microphoneEnabled = true
-    elements.captureMode.value = ""
+    elements.captureMode.value = "off"
     await render()
   }
 
   const setStageImage = (src, title, caption) => {
     elements.stageVideo.classList.add("hidden")
     elements.stageImage.classList.remove("hidden")
+    elements.stageAudioWave?.classList.add("hidden")
     elements.stageImage.src = src
     setText(elements.stageTitle, title)
     setText(elements.stageCaption, caption)
   }
 
+  const showStageAudioWave = (title, caption) => {
+    elements.stageVideo.classList.add("hidden")
+    elements.stageImage.classList.add("hidden")
+    elements.stageAudioWave?.classList.remove("hidden")
+    setText(elements.stageTitle, title)
+    setText(elements.stageCaption, caption)
+  }
+
   const setLivePreview = async stream => {
+    elements.stageAudioWave?.classList.add("hidden")
     elements.stageImage.classList.add("hidden")
     elements.stageVideo.classList.remove("hidden")
     elements.stageVideo.controls = false
@@ -194,72 +469,92 @@ const initRecordStudio = () => {
     }
   }
 
-  const buildCameraStream = async () => {
+  const buildCameraStream = async mode => {
+    const captureMicrophone = mode === "camera"
+    const cameraOff = elements.cameraDevice.value === CAMERA_OFF_VALUE
+    const microphoneOff = !captureMicrophone || elements.micDevice.value === MICROPHONE_OFF_VALUE
     const cameraId = getSelectedDeviceId(elements.cameraDevice)
     const micId = getSelectedDeviceId(elements.micDevice)
+
+    if (cameraOff && microphoneOff) {
+      return new MediaStream([])
+    }
+
     let cameraStream = null
-    try {
-      cameraStream = await navigator.mediaDevices.getUserMedia({
-        video: cameraId ? {deviceId: {exact: cameraId}} : true,
-        audio: false,
-      })
-    } catch (error) {
-      if (cameraId) {
+    if (!cameraOff) {
+      try {
         cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
+          video: cameraId ? {deviceId: {exact: cameraId}} : true,
           audio: false,
         })
-      } else {
-        try {
+      } catch (error) {
+        if (cameraId) {
           cameraStream = await navigator.mediaDevices.getUserMedia({
             video: true,
-            audio: true,
+            audio: false,
           })
-        } catch (_fallbackError) {
-          throw error
+        } else {
+          try {
+            cameraStream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: true,
+            })
+          } catch (_fallbackError) {
+            throw error
+          }
         }
       }
     }
 
     let micStream = null
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        video: false,
-        audio: micId ? {deviceId: {exact: micId}} : true,
-      })
-    } catch (error) {
-      if (micId) {
-        try {
-          micStream = await navigator.mediaDevices.getUserMedia({
-            video: false,
-            audio: true,
-          })
-        } catch (_fallbackError) {
+    if (!microphoneOff) {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: micId ? {deviceId: {exact: micId}} : true,
+        })
+      } catch (error) {
+        if (micId) {
+          try {
+            micStream = await navigator.mediaDevices.getUserMedia({
+              video: false,
+              audio: true,
+            })
+          } catch (_fallbackError) {
+            micStream = null
+          }
+        } else {
           micStream = null
         }
-      } else {
-        micStream = null
       }
     }
 
     return new MediaStream([
-      ...cameraStream.getVideoTracks(),
+      ...(cameraStream ? cameraStream.getVideoTracks() : []),
       ...(micStream ? micStream.getAudioTracks() : []),
     ])
   }
 
-  const buildScreenStream = async () => {
+  const buildScreenStream = async mode => {
+    const captureSystemAudio = mode === "screen"
+    const captureMicrophone = mode === "screen"
+    const microphoneOff = !captureMicrophone || elements.micDevice.value === MICROPHONE_OFF_VALUE
     const micId = getSelectedDeviceId(elements.micDevice)
-    const displayStream = await navigator.mediaDevices.getDisplayMedia({video: true, audio: true})
+    const displayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: captureSystemAudio,
+    })
 
     let micStream = null
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        video: false,
-        audio: micId ? {deviceId: {exact: micId}} : true,
-      })
-    } catch (_error) {
-      micStream = null
+    if (captureMicrophone && !microphoneOff) {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: micId ? {deviceId: {exact: micId}} : true,
+        })
+      } catch (_error) {
+        micStream = null
+      }
     }
 
     const combined = new MediaStream([
@@ -280,6 +575,29 @@ const initRecordStudio = () => {
     return combined
   }
 
+  const buildMicOnlyStream = async () => {
+    const microphoneOff = elements.micDevice.value === MICROPHONE_OFF_VALUE
+    if (microphoneOff) {
+      return new MediaStream([])
+    }
+
+    const micId = getSelectedDeviceId(elements.micDevice)
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: micId ? {deviceId: {exact: micId}} : true,
+      })
+    } catch (error) {
+      if (micId) {
+        return navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: true,
+        })
+      }
+      throw error
+    }
+  }
+
   const setupSource = async source => {
     if (state.status === "recording" || state.status === "paused") {
       state.errorMessage = "Stop recording before switching sources."
@@ -297,8 +615,7 @@ const initRecordStudio = () => {
     stopPreviewStream()
     state.source = source
     elements.captureMode.value = source
-    state.cameraEnabled = true
-    state.microphoneEnabled = true
+    syncDeviceControlsForMode(source)
     state.status = "previewing"
     state.seconds = 0
     state.errorMessage = null
@@ -306,15 +623,34 @@ const initRecordStudio = () => {
     await render()
 
     try {
-      state.previewStream = source === "camera" ? await buildCameraStream() : await buildScreenStream()
-      applyTrackEnabledState()
+      const isCameraMode = CAMERA_MODES.has(source)
+      const isScreenMode = SCREEN_MODES.has(source)
+      state.previewStream = isCameraMode
+        ? await buildCameraStream(source)
+        : isScreenMode
+          ? await buildScreenStream(source)
+          : await buildMicOnlyStream()
+      if (isCameraMode && state.previewStream.getTracks().length === 0) {
+        state.status = "error"
+        state.errorMessage = "Camera and microphone are both off. Enable at least one to preview."
+        await render()
+        return
+      }
+      if (MIC_ONLY_MODES.has(source) && state.previewStream.getTracks().length === 0) {
+        state.status = "error"
+        state.errorMessage = "Microphone is off. Select a microphone input to preview."
+        await render()
+        return
+      }
+      await refreshDeviceOptions()
       await render()
     } catch (error) {
       state.status = "error"
-      if (source === "camera" && error.name === "NotReadableError") {
+      if (CAMERA_MODES.has(source) && error.name === "NotReadableError") {
         state.errorMessage = "Camera is busy or unavailable. Turn off capture or refresh the tab, then try again."
       } else {
-        state.errorMessage = `Could not start ${source} capture (${error.name || "permission denied"}).`
+        const sourceLabel = SOURCE_LABELS[source] || source
+        state.errorMessage = `Could not start ${sourceLabel} capture (${error.name || "permission denied"}).`
       }
       await render()
     }
@@ -342,7 +678,14 @@ const initRecordStudio = () => {
         size: blob.size,
       }
 
-      const sourceLabel = state.source === "screen" ? "Screen Capture" : "Camera Capture"
+      const sourceLabelByMode = {
+        camera: "Camera + Mic Capture",
+        camera_only: "Camera Capture",
+        mic_only: "Microphone Capture",
+        screen: "Screen + Audio Capture",
+        screen_only: "Screen Capture",
+      }
+      const sourceLabel = sourceLabelByMode[state.source] || "Capture"
       const clipRecord = {
         id: clipId,
         title: `${sourceLabel} ${new Date(clipId).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}`,
@@ -427,21 +770,6 @@ const initRecordStudio = () => {
       elements.ingestBadge.classList.add("badge-error")
     }
 
-    elements.sourceStatusBadge.textContent = state.status === "error"
-      ? "Capture error"
-      : hasSource
-        ? hasPreviewStream
-          ? "Source selected"
-          : "Awaiting browser permission"
-        : "Select a source first"
-
-    elements.sourceStatusBadge.classList.toggle("badge-success", hasPreviewStream)
-    elements.sourceStatusBadge.classList.toggle(
-      "badge-warning",
-      hasSource && !hasPreviewStream && state.status !== "error"
-    )
-    elements.sourceStatusBadge.classList.toggle("badge-error", state.status === "error")
-
     elements.captureMode.disabled = state.status === "recording" || state.status === "paused"
     elements.cameraDevice.disabled = state.status === "recording" || state.status === "paused"
     elements.micDevice.disabled = state.status === "recording" || state.status === "paused"
@@ -450,83 +778,107 @@ const initRecordStudio = () => {
     setButtonDisabled(elements.pause, !(state.status === "recording"))
     setButtonDisabled(elements.resume, !(state.status === "paused"))
     setButtonDisabled(elements.stop, !(state.status === "recording" || state.status === "paused"))
-    setButtonDisabled(elements.sourceClear, !hasSource || state.status === "recording" || state.status === "paused")
     elements.recordControlsGroup?.classList.toggle("hidden", !hasSource)
     elements.recordControlsGroup?.classList.toggle("flex", hasSource)
-    elements.recordControlsLockedNote?.classList.toggle("hidden", hasSource)
-    setButtonDisabled(elements.toggleCamera, !hasPreviewStream || !hasSource)
-    setButtonDisabled(elements.toggleMicrophone, !hasPreviewStream || !hasSource)
-    setText(elements.toggleCameraLabel, state.cameraEnabled ? "Camera On" : "Camera Off")
-    setText(elements.toggleMicrophoneLabel, state.microphoneEnabled ? "Mic On" : "Mic Off")
 
     if (state.status === "idle") {
+      setStageFrameMode(false)
+      state.audioWaveMode = "level"
+      stopAudioWavePreview()
       setStageImage(
         STAGE_IMAGES.idle,
         "Choose a source to begin previewing.",
         "This page is dedicated to capture only. Manage clips in Media Library."
       )
     } else if (state.status === "error") {
-      const fallback = state.source === "screen" ? STAGE_IMAGES.preview_screen : STAGE_IMAGES.preview_camera
+      setStageFrameMode(MIC_ONLY_MODES.has(state.source))
+      state.audioWaveMode = "level"
+      stopAudioWavePreview()
+      const fallback = MIC_ONLY_MODES.has(state.source)
+        ? STAGE_IMAGES.preview_mic
+        : SCREEN_MODES.has(state.source)
+          ? STAGE_IMAGES.preview_screen
+          : STAGE_IMAGES.preview_camera
       setStageImage(
         fallback,
         "Capture could not start.",
         "Check permissions and try selecting source again."
       )
+    } else if (hasPreviewStream && MIC_ONLY_MODES.has(state.source)) {
+      setStageFrameMode(true)
+      state.audioWaveMode = state.status === "recording" || state.status === "paused" ? "timeline" : "level"
+      showStageAudioWave(
+        state.status === "recording" || state.status === "paused"
+          ? "Recording microphone waveform."
+          : "Microphone input ready.",
+        "Use Start Recording when you are ready."
+      )
+      startAudioWavePreview(state.previewStream)
     } else if (hasPreviewStream) {
+      setStageFrameMode(false)
+      state.audioWaveMode = "level"
+      stopAudioWavePreview()
       await setLivePreview(state.previewStream)
-      setText(elements.stageTitle, state.source === "camera"
+      setText(elements.stageTitle, CAMERA_MODES.has(state.source)
         ? "Live camera preview ready."
         : "Desktop/application preview ready.")
       setText(elements.stageCaption, "Use Start Recording when you are ready.")
     } else {
-      const waiting = state.source === "screen" ? STAGE_IMAGES.preview_screen : STAGE_IMAGES.preview_camera
+      setStageFrameMode(MIC_ONLY_MODES.has(state.source))
+      state.audioWaveMode = "level"
+      stopAudioWavePreview()
+      const waiting = MIC_ONLY_MODES.has(state.source)
+        ? STAGE_IMAGES.preview_mic
+        : SCREEN_MODES.has(state.source)
+          ? STAGE_IMAGES.preview_screen
+          : STAGE_IMAGES.preview_camera
       setStageImage(waiting, "Waiting for source permission.", "Approve browser permission prompt to continue.")
     }
 
-    elements.controlHelp.textContent = state.errorMessage || (hasSource
-      ? hasPreviewStream
-        ? "Recordings are ingested to server automatically and retained locally."
-        : "Waiting for permission to access your selected source."
-      : "Select a capture source to unlock recording controls.")
+    const statusMessage = state.errorMessage || state.ingestMessage
+    const hasFeedback = Boolean(state.lastCapture || statusMessage)
+    elements.captureFeedbackPanel?.classList.toggle("hidden", !hasFeedback)
+    elements.captureFeedbackPanel?.classList.toggle("flex", hasFeedback)
 
     if (state.lastCapture) {
       const mb = (state.lastCapture.size / (1024 * 1024)).toFixed(2)
       elements.lastCaptureNote.textContent = `Last capture retained in browser memory (${mb} MB).`
+      elements.lastCapturePanel?.classList.remove("hidden")
+      elements.lastCapturePanel?.classList.add("flex")
       setButtonDisabled(elements.lastDownload, false)
     } else {
-      elements.lastCaptureNote.textContent = "No captures in memory yet."
+      elements.lastCapturePanel?.classList.add("hidden")
+      elements.lastCapturePanel?.classList.remove("flex")
       setButtonDisabled(elements.lastDownload, true)
     }
 
-    elements.ingestStatusNote.textContent = state.ingestMessage || "Server ingest status will appear here after recording."
-    if (state.ingestServerUrl) {
-      elements.ingestServerLink.classList.remove("hidden")
-      elements.ingestServerLink.href = state.ingestServerUrl
+    if (statusMessage) {
+      elements.ingestStatusNote.textContent = statusMessage
+      elements.ingestStatusNote.classList.remove("hidden")
     } else {
-      elements.ingestServerLink.classList.add("hidden")
-      elements.ingestServerLink.href = "#"
+      elements.ingestStatusNote.textContent = ""
+      elements.ingestStatusNote.classList.add("hidden")
     }
+
   }
 
   elements.captureMode.addEventListener("change", async () => {
     const mode = elements.captureMode.value
-    if (mode === "camera" || mode === "screen") {
+    if (CAMERA_MODES.has(mode) || SCREEN_MODES.has(mode) || MIC_ONLY_MODES.has(mode)) {
       await setupSource(mode)
       return
     }
     await resetToIdle()
   })
 
-  elements.sourceClear.addEventListener("click", () => resetToIdle())
-
   elements.cameraDevice.addEventListener("change", async () => {
-    if (state.source === "camera" && state.status !== "recording" && state.status !== "paused") {
-      await setupSource("camera")
+    if (CAMERA_MODES.has(state.source) && state.status !== "recording" && state.status !== "paused") {
+      await setupSource(state.source)
     }
   })
 
   elements.micDevice.addEventListener("change", async () => {
-    if (state.source && state.status !== "recording" && state.status !== "paused") {
+    if (MICROPHONE_MODES.has(state.source) && state.status !== "recording" && state.status !== "paused") {
       await setupSource(state.source)
     }
   })
@@ -580,20 +932,6 @@ const initRecordStudio = () => {
     await render()
   })
 
-  elements.toggleCamera?.addEventListener("click", async () => {
-    if (!state.previewStream) return
-    state.cameraEnabled = !state.cameraEnabled
-    applyTrackEnabledState()
-    await render()
-  })
-
-  elements.toggleMicrophone?.addEventListener("click", async () => {
-    if (!state.previewStream) return
-    state.microphoneEnabled = !state.microphoneEnabled
-    applyTrackEnabledState()
-    await render()
-  })
-
   elements.lastDownload.addEventListener("click", () => {
     if (!state.lastCapture?.url) return
     const link = document.createElement("a")
@@ -609,12 +947,29 @@ const initRecordStudio = () => {
     if (state.lastCapture?.url) {
       URL.revokeObjectURL(state.lastCapture.url)
     }
+    if (navigator.mediaDevices?.removeEventListener) {
+      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange)
+    }
+    window.removeEventListener("beforeunload", handleBeforeUnload)
     page.dataset.initialized = "false"
   }
 
-  window[GLOBAL_CLEANUP_KEY] = cleanup
-  window.addEventListener("beforeunload", cleanup)
+  const handleDeviceChange = () => {
+    void refreshDeviceOptions()
+  }
 
+  const handleBeforeUnload = () => {
+    cleanup()
+  }
+
+  if (navigator.mediaDevices?.addEventListener) {
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange)
+  }
+
+  window[GLOBAL_CLEANUP_KEY] = cleanup
+  window.addEventListener("beforeunload", handleBeforeUnload)
+
+  void refreshDeviceOptions()
   render()
 }
 

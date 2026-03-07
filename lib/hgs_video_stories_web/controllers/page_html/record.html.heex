@@ -3,84 +3,18 @@
   id="recording-studio-page"
   class="min-h-screen bg-gradient-to-b from-base-200 via-base-100 to-base-200 text-base-content"
 >
-  <header class="border-b border-base-300/90 bg-base-100/90 backdrop-blur">
-    <div class="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-      <a href={~p"/"} id="app-logo" class="inline-flex items-center gap-3">
-        <img src={~p"/images/logo.svg"} width="32" alt="HGS Video Stories logo" />
-        <span class="text-sm font-semibold tracking-[0.2em]">HGS VIDEO STORIES</span>
-      </a>
+  <.studio_header active_tab="record" />
 
-      <div class="hidden items-center gap-3 md:flex">
-        <details id="desktop-profile-menu" class="dropdown dropdown-end">
-          <summary class="btn btn-ghost gap-3 rounded-full px-2 normal-case">
-            <img
-              src={~p"/images/avatar-placeholder.svg"}
-              alt="Profile photo"
-              class="size-9 rounded-full object-cover"
-            />
-            <span class="text-sm font-medium">Jordan Lee</span>
-            <.icon name="hero-chevron-down-mini" class="size-4 opacity-70" />
-          </summary>
-          <ul class="menu dropdown-content z-50 mt-3 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
-            <li><a href="#">Account settings</a></li>
-            <li><a href="#">Billing</a></li>
-            <li><a href="#">Sign out</a></li>
-          </ul>
-        </details>
-      </div>
-
-      <div class="md:hidden">
-        <details id="mobile-profile-menu" class="dropdown dropdown-end">
-          <summary class="btn btn-ghost btn-circle" aria-label="Open account menu">
-            <.icon name="hero-bars-3" class="size-6" />
-          </summary>
-          <ul class="menu dropdown-content z-50 mt-3 w-64 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
-            <li class="menu-title px-2 py-1">
-              <span class="flex items-center gap-2">
-                <img
-                  src={~p"/images/avatar-placeholder.svg"}
-                  alt="Profile photo"
-                  class="size-7 rounded-full object-cover"
-                />
-                <span>Jordan Lee</span>
-              </span>
-            </li>
-            <li><a href="#">Account settings</a></li>
-            <li><a href="#">Billing</a></li>
-            <li><a href="#">Sign out</a></li>
-          </ul>
-        </details>
-      </div>
-    </div>
-  </header>
-
-  <main class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-    <div class="mb-6">
-      <div class="tabs tabs-box w-fit bg-base-100 p-1 text-sm shadow-sm">
-        <a href={~p"/media"} class="tab text-base-content">Media Library</a>
-        <a href={~p"/record"} class="tab tab-active text-base-content">Recording</a>
-      </div>
-    </div>
-
+  <main class="relative z-0 mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
     <section id="studio-stage" class="space-y-6">
       <article
         id="capture-and-recording-control"
-        class="rounded-3xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6"
+        class="rounded-3xl border border-base-300 bg-base-100 p-4 shadow-sm sm:p-6"
       >
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 class="text-base font-semibold">Capture Source</h2>
-          <span id="source-status-badge" class="badge badge-sm badge-outline">
-            Select a source first
-          </span>
-        </div>
-
-        <div class="mb-4 flex justify-end">
-          <button id="source-clear" type="button" class="btn btn-xs btn-outline" disabled>
-            Turn Off Capture
-          </button>
-        </div>
-
-        <div class="relative aspect-video overflow-hidden rounded-2xl border border-base-300 bg-base-200">
+        <div
+          id="stage-frame"
+          class="relative overflow-hidden rounded-2xl border border-base-300 bg-base-200 transition-all duration-300 h-52 sm:h-80 lg:h-[26rem]"
+        >
           <video
             id="stage-video"
             class="hidden h-full w-full rounded-2xl bg-slate-950 object-cover"
@@ -93,23 +27,28 @@
             alt="Recording stage placeholder"
             class="h-full w-full rounded-2xl object-cover"
           />
+          <canvas
+            id="stage-audio-wave"
+            class="pointer-events-none absolute inset-0 hidden h-full w-full rounded-2xl"
+          >
+          </canvas>
           <div class="pointer-events-none absolute inset-0 flex flex-col justify-between p-3 sm:p-4">
-            <div class="flex flex-wrap items-center gap-2">
+            <div class="flex flex-wrap items-center gap-1">
               <span
                 id="studio-state-badge"
-                class="badge badge-sm badge-outline bg-base-100/80 backdrop-blur"
+                class="badge badge-outline bg-base-100/80 px-1.5 py-0 text-[9px] font-medium leading-none backdrop-blur"
               >
                 State: idle
               </span>
               <span
                 id="studio-source-badge"
-                class="badge badge-sm badge-outline bg-base-100/80 backdrop-blur"
+                class="badge badge-outline bg-base-100/80 px-1.5 py-0 text-[9px] font-medium leading-none backdrop-blur"
               >
                 Source: not selected
               </span>
               <span
                 id="studio-ingest-badge"
-                class="badge badge-sm badge-outline bg-base-100/80 backdrop-blur"
+                class="badge badge-outline bg-base-100/80 px-1.5 py-0 text-[9px] font-medium leading-none backdrop-blur"
               >
                 Ingest: idle
               </span>
@@ -160,38 +99,12 @@
                     Timer: 00:00
                   </span>
                 </div>
-                <div class="flex items-center gap-2">
-                  <button
-                    id="toggle-camera"
-                    type="button"
-                    class="btn btn-xs btn-outline rounded-full"
-                    disabled
-                  >
-                    <.icon name="hero-video-camera" class="size-4" />
-                    <span id="toggle-camera-label">Camera On</span>
-                  </button>
-                  <button
-                    id="toggle-microphone"
-                    type="button"
-                    class="btn btn-xs btn-outline rounded-full"
-                    disabled
-                  >
-                    <.icon name="hero-microphone" class="size-4" />
-                    <span id="toggle-microphone-label">Mic On</span>
-                  </button>
-                </div>
               </div>
-              <p
-                id="record-controls-locked-note"
-                class="rounded-full border border-base-300 bg-base-100/90 px-3 py-1 text-xs font-medium text-base-content/80 shadow-lg backdrop-blur"
-              >
-                Select a capture source to enable recording controls
-              </p>
             </div>
           </div>
         </div>
-        <div class="mx-auto mt-4 flex w-full max-w-3xl flex-wrap items-center justify-center gap-3">
-          <div class="relative w-52">
+        <div class="mx-auto mt-2 grid w-full max-w-3xl grid-cols-1 gap-1 sm:mt-4 sm:grid-cols-3 sm:gap-3 [&_.fieldset]:mb-0">
+          <div class="relative w-full">
             <.icon
               name="hero-signal"
               class="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-base-content/65"
@@ -201,12 +114,18 @@
               id="capture-mode"
               name="capture_mode"
               class="select select-sm w-full rounded-full border-base-300 bg-base-100 pl-9 pr-8"
-              prompt="Capture mode"
-              options={[{"Camera + Mic", "camera"}, {"Screen + Audio", "screen"}]}
-              value=""
+              options={[
+                {"Capture Off", "off"},
+                {"Camera + Mic", "camera"},
+                {"Camera only", "camera_only"},
+                {"Mic only", "mic_only"},
+                {"Screen + Audio", "screen"},
+                {"Screen only", "screen_only"}
+              ]}
+              value="off"
             />
           </div>
-          <div class="relative w-52">
+          <div class="relative w-full">
             <.icon
               name="hero-microphone"
               class="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-base-content/65"
@@ -216,11 +135,11 @@
               id="microphone-device"
               name="microphone_device"
               class="select select-sm w-full rounded-full border-base-300 bg-base-100 pl-9 pr-8"
-              options={[{"MacBook Mic", "mic-1"}, {"USB Mic", "mic-2"}]}
-              value="mic-1"
+              options={[{"Microphone Off", "__mic_off__"}, {"System default microphone", ""}]}
+              value=""
             />
           </div>
-          <div class="relative w-52">
+          <div class="relative w-full">
             <.icon
               name="hero-video-camera"
               class="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-base-content/65"
@@ -230,35 +149,34 @@
               id="camera-device"
               name="camera_device"
               class="select select-sm w-full rounded-full border-base-300 bg-base-100 pl-9 pr-8"
-              options={[{"FaceTime HD Camera", "cam-1"}, {"External USB Camera", "cam-2"}]}
-              value="cam-1"
+              options={[{"Camera Off", "__camera_off__"}, {"System default camera", ""}]}
+              value=""
             />
           </div>
         </div>
 
-        <p id="control-help" class="mt-3 text-sm text-base-content/65">
-          Select a capture source to unlock recording controls.
-        </p>
-        <div class="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-base-300 bg-base-200/60 px-3 py-2">
-          <p id="last-capture-note" class="text-sm text-base-content/70">
-            No captures in memory yet.
-          </p>
-          <button id="last-download" type="button" class="btn btn-xs btn-outline ml-auto" disabled>
-            Download Last Capture
-          </button>
-        </div>
-        <p id="ingest-status-note" class="mt-2 text-sm text-base-content/65">
-          Server ingest status will appear here after recording.
-        </p>
-        <a
-          id="ingest-server-link"
-          href="#"
-          target="_blank"
-          rel="noreferrer"
-          class="hidden text-sm font-medium text-primary underline"
+        <div
+          id="capture-feedback-panel"
+          class="mx-auto mt-3 hidden w-full max-w-lg flex-col items-center gap-2"
         >
-          Open server copy
-        </a>
+          <div
+            id="last-capture-panel"
+            class="hidden w-full items-center justify-center gap-2 rounded-lg border border-base-300 bg-base-200/60 px-3 py-2"
+          >
+            <p id="last-capture-note" class="text-center text-xs text-base-content/70">
+              Last capture retained in browser memory.
+            </p>
+            <button
+              id="last-download"
+              type="button"
+              class="btn btn-xs btn-outline shrink-0"
+              disabled
+            >
+              Download
+            </button>
+          </div>
+          <p id="ingest-status-note" class="hidden text-center text-xs text-base-content/70"></p>
+        </div>
         <span id="record-control-timer" class="hidden">00:00</span>
       </article>
     </section>

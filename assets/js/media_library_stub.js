@@ -24,6 +24,14 @@ const formatCreatedAt = iso => {
   })
 }
 
+const SOURCE_DISPLAY_LABELS = {
+  camera: "Camera + Microphone",
+  camera_only: "Camera only",
+  mic_only: "Microphone only",
+  screen: "Screen / Application + Audio",
+  screen_only: "Screen / Application only",
+}
+
 const initMediaLibrary = () => {
   const page = document.getElementById("media-library-page")
   if (!page || page.dataset.initialized === "true") return
@@ -80,7 +88,7 @@ const initMediaLibrary = () => {
     }
 
     elements.title.textContent = clip.title
-    elements.metaSource.textContent = clip.source === "camera" ? "Camera + Microphone" : "Screen / Application"
+    elements.metaSource.textContent = SOURCE_DISPLAY_LABELS[clip.source] || "Unknown"
     elements.metaDuration.textContent = formatTimer(clip.duration_seconds || 0)
     elements.metaCreated.textContent = formatCreatedAt(clip.created_at)
     elements.metaSize.textContent = `${(clip.size_bytes / (1024 * 1024)).toFixed(2)} MB`

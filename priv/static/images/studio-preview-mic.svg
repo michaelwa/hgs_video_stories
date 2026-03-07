@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Microphone preview stage</title>
+  <desc id="desc">Placeholder illustration for microphone-only capture preview</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" rx="32" fill="url(#bg)"/>
+  <rect x="140" y="110" width="1000" height="500" rx="24" fill="#0b1220" fill-opacity="0.6"/>
+  <g fill="none" stroke="#38bdf8" stroke-linecap="round" stroke-width="12" opacity="0.9">
+    <path d="M260 360h40l24-60 44 120 44-180 44 240 44-160 44 120 44-80 44 40 44-60 44 90h80" />
+  </g>
+  <text x="640" y="560" font-family="ui-sans-serif, system-ui" font-size="34" text-anchor="middle" fill="#e2e8f0">
+    Microphone preview active
+  </text>
+</svg>
