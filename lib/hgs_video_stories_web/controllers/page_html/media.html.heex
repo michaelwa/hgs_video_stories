@@ -57,8 +57,8 @@
   <main class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
     <div class="mb-6">
       <div class="tabs tabs-box w-fit bg-base-100 p-1 text-sm shadow-sm">
-        <a href={~p"/media"} class="tab tab-active">Media Library</a>
-        <a href={~p"/record"} class="tab">Recording</a>
+        <a href={~p"/media"} class="tab tab-active !text-base-content">Media Library</a>
+        <a href={~p"/record"} class="tab !text-base-content !opacity-100">Recording</a>
       </div>
     </div>
 
@@ -87,7 +87,7 @@
 
     <section id="media-populated-state" class="hidden">
       <div class="grid gap-6 xl:grid-cols-12">
-        <aside class="space-y-4 xl:col-span-4">
+        <div class="space-y-4 xl:col-span-4">
           <article class="rounded-3xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
             <h2 class="text-lg font-semibold">Captured Clips</h2>
             <p class="mt-1 text-sm text-base-content/70">
@@ -95,7 +95,7 @@
             </p>
             <ul id="media-clip-list" class="mt-4 space-y-3"></ul>
           </article>
-        </aside>
+        </div>
 
         <section class="space-y-6 xl:col-span-8">
           <article class="rounded-3xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
@@ -134,7 +134,7 @@
               href="#"
               target="_blank"
               rel="noreferrer"
-              class="mt-2 hidden text-sm font-medium text-primary underline"
+              class="mt-2 hidden text-sm font-medium text-base-content underline visited:text-base-content hover:text-base-content"
             >
               Open server copy
             </a>
