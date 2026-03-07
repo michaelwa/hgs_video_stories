@@ -50,6 +50,10 @@ defmodule HgsVideoStories.MediaTranscription do
     |> Repo.one()
   end
 
+  def get_session(session_id) when is_binary(session_id) do
+    Repo.get(TranscriptionSession, session_id)
+  end
+
   def upsert_completed_segment(attrs) do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
 
