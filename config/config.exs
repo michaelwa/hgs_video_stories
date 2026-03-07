@@ -11,6 +11,11 @@ config :hgs_video_stories,
   ecto_repos: [HgsVideoStories.Repo],
   generators: [timestamp_type: :utc_datetime, binary_id: true]
 
+config :hgs_video_stories, :openai_realtime,
+  base_url: "https://api.openai.com",
+  model: "gpt-4o-transcribe",
+  turn_detection: "server_vad"
+
 # Configure the endpoint
 config :hgs_video_stories, HgsVideoStoriesWeb.Endpoint,
   url: [host: "localhost"],

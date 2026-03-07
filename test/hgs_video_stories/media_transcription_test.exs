@@ -1,5 +1,5 @@
 defmodule HgsVideoStories.MediaTranscriptionTest do
-  use HgsVideoStories.DataCase, async: true
+  use HgsVideoStories.DataCase
 
   alias HgsVideoStories.MediaTranscription
 

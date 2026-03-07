@@ -23,6 +23,10 @@ end
 config :hgs_video_stories, HgsVideoStoriesWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4001"))]
 
+if openai_api_key = System.get_env("OPENAI_API_KEY") do
+  config :hgs_video_stories, :openai_realtime, api_key: openai_api_key
+end
+
 if config_env() == :prod do
   database_path =
     System.get_env("DATABASE_PATH") ||
