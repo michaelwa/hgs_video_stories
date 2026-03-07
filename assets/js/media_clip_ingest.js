@@ -1,4 +1,4 @@
-export const uploadClipToServer = async ({blob, id, title, source, durationSeconds, createdAt}) => {
+export const uploadClipToServer = async ({blob, id, title, source, durationSeconds, createdAt, hadAudio = false}) => {
   const uploadFile = new File([blob], `${id}.webm`, {
     type: blob.type || "video/webm",
   })
@@ -9,6 +9,7 @@ export const uploadClipToServer = async ({blob, id, title, source, durationSecon
   formData.append("source", source)
   formData.append("duration_seconds", String(durationSeconds || 0))
   formData.append("created_at", createdAt)
+  formData.append("had_audio", hadAudio ? "true" : "false")
 
   const response = await fetch("/api/media_clips", {
     method: "POST",

@@ -36,17 +36,20 @@ defmodule HgsVideoStoriesWeb.MediaClipController do
     safe_title = sanitize_title(params["title"])
     stored_filename = "#{clip_id}-#{safe_title}#{extension}"
     absolute_path = Path.join(storage_dir(), stored_filename)
+    had_audio = parse_boolean(params["had_audio"])
 
     with :ok <- File.cp(upload.path, absolute_path),
          {:ok, %File.Stat{size: size_bytes}} <- File.stat(absolute_path) do
       {:ok,
        %{
          id: clip_id,
+         media_id: clip_id,
          title: params["title"] || "Captured Clip",
          source: params["source"] || "camera",
          duration_seconds: parse_duration(params["duration_seconds"]),
          created_at: params["created_at"] || DateTime.utc_now() |> DateTime.to_iso8601(),
          size_bytes: size_bytes,
+         had_audio: had_audio,
          saved_at: DateTime.utc_now() |> DateTime.to_iso8601(),
          url: "/uploads/media_clips/#{stored_filename}"
        }}
@@ -93,4 +96,7 @@ defmodule HgsVideoStoriesWeb.MediaClipController do
   end
 
   defp parse_duration(_value), do: 0
+
+  defp parse_boolean(value) when value in [true, "true", "1", 1], do: true
+  defp parse_boolean(_value), do: false
 end

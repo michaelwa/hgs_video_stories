@@ -215,13 +215,14 @@ const initMediaLibrary = () => {
       source: selected.source,
       durationSeconds: selected.duration_seconds,
       createdAt: selected.created_at,
+      hadAudio: selected.had_audio || false,
     })
 
     await addClipToStore({
       ...fullClip,
       server_url: result.url,
       server_saved_at: result.saved_at,
-      server_id: result.id,
+      server_id: result.media_id ?? result.id,
     })
 
     await syncState()

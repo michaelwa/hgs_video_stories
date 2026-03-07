@@ -686,6 +686,7 @@ const initRecordStudio = () => {
         screen_only: "Screen Capture",
       }
       const sourceLabel = sourceLabelByMode[state.source] || "Capture"
+      const hadAudio = (state.previewStream?.getAudioTracks()?.length || 0) > 0
       const clipRecord = {
         id: clipId,
         title: `${sourceLabel} ${new Date(clipId).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}`,
@@ -693,6 +694,7 @@ const initRecordStudio = () => {
         duration_seconds: Math.max(1, state.seconds),
         created_at: new Date(clipId).toISOString(),
         size_bytes: blob.size,
+        had_audio: hadAudio,
       }
 
       let persistedLocally = false
@@ -720,6 +722,7 @@ const initRecordStudio = () => {
           source: clipRecord.source,
           durationSeconds: clipRecord.duration_seconds,
           createdAt: clipRecord.created_at,
+          hadAudio: clipRecord.had_audio,
         })
 
         if (persistedLocally) {
@@ -728,7 +731,7 @@ const initRecordStudio = () => {
             blob,
             server_url: ingestResult.url,
             server_saved_at: ingestResult.saved_at,
-            server_id: ingestResult.id,
+            server_id: ingestResult.media_id ?? ingestResult.id,
           })
         }
 
