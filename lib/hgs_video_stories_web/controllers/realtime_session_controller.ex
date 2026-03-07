@@ -8,6 +8,12 @@ defmodule HgsVideoStoriesWeb.RealtimeSessionController do
     with {:ok, media_id} <- parse_media_id(params),
          {:ok, transcription_session} <- MediaTranscription.get_or_start_active_session(media_id),
          {:ok, openai_session} <- realtime_client().create_session(%{media_id: media_id}) do
+      :telemetry.execute(
+        [:hgs_video_stories, :transcription, :session, :created],
+        %{count: 1},
+        %{media_id: media_id, transcription_session_id: transcription_session.id}
+      )
+
       json(conn, %{
         transcription_session_id: transcription_session.id,
         media_id: media_id,
@@ -30,6 +36,12 @@ defmodule HgsVideoStoriesWeb.RealtimeSessionController do
         |> json(%{error: message})
 
       {:error, _reason, message} ->
+        :telemetry.execute(
+          [:hgs_video_stories, :transcription, :session, :create_failed],
+          %{count: 1},
+          %{error: message}
+        )
+
         conn
         |> put_status(:bad_gateway)
         |> json(%{error: message})

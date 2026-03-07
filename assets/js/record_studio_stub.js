@@ -1,5 +1,6 @@
 import {addClipToStore, supportsPersistentClipStore} from "./media_clip_store"
 import {uploadClipToServer} from "./media_clip_ingest"
+import {Socket as PhoenixSocket} from "phoenix"
 
 const STAGE_IMAGES = {
   idle: "/images/studio-idle.svg",
@@ -47,6 +48,35 @@ const findSupportedMimeType = () => {
   return candidates.find(type => MediaRecorder.isTypeSupported(type)) || "video/webm"
 }
 
+const connectTranscriptChannel = ({mediaId, transcriptionSessionId}) =>
+  new Promise((resolve, reject) => {
+    const socket = new PhoenixSocket("/socket")
+    socket.connect()
+
+    const channel = socket.channel(`transcripts:${mediaId}`, {
+      transcription_session_id: transcriptionSessionId,
+    })
+
+    channel.join()
+      .receive("ok", () => resolve({socket, channel}))
+      .receive("error", payload => {
+        socket.disconnect()
+        reject(new Error(payload?.reason || "Could not join transcript channel."))
+      })
+      .receive("timeout", () => {
+        socket.disconnect()
+        reject(new Error("Timed out joining transcript channel."))
+      })
+  })
+
+const pushChannelEvent = (channel, event, payload) =>
+  new Promise((resolve, reject) => {
+    channel.push(event, payload)
+      .receive("ok", response => resolve(response))
+      .receive("error", response => reject(new Error(response?.error || "Channel event failed.")))
+      .receive("timeout", () => reject(new Error("Channel event timed out.")))
+  })
+
 const initRecordStudio = () => {
   const existingCleanup = window[GLOBAL_CLEANUP_KEY]
   if (typeof existingCleanup === "function") {
@@ -63,6 +93,7 @@ const initRecordStudio = () => {
     sourceBadge: document.getElementById("studio-source-badge"),
     timerBadge: document.getElementById("studio-timer-badge"),
     ingestBadge: document.getElementById("studio-ingest-badge"),
+    transcriptionBadge: document.getElementById("studio-transcription-badge"),
     captureMode: document.getElementById("capture-mode"),
     cameraDevice: document.getElementById("camera-device"),
     micDevice: document.getElementById("microphone-device"),
@@ -83,6 +114,9 @@ const initRecordStudio = () => {
     lastCaptureNote: document.getElementById("last-capture-note"),
     lastDownload: document.getElementById("last-download"),
     ingestStatusNote: document.getElementById("ingest-status-note"),
+    transcriptionStatusNote: document.getElementById("transcription-status-note"),
+    transcriptionPreviewPanel: document.getElementById("transcription-preview-panel"),
+    transcriptionPreviewText: document.getElementById("transcription-preview-text"),
   }
 
   if (!elements.stateBadge) return
@@ -106,6 +140,11 @@ const initRecordStudio = () => {
     ingestStatus: "idle",
     ingestMessage: null,
     ingestServerUrl: null,
+    transcriptionStatus: "idle",
+    transcriptionMessage: null,
+    transcriptionPreview: "",
+    transcriptionFinalText: "",
+    transcriptionCleanup: null,
     audioContext: null,
     audioWaveRef: null,
     audioSourceNode: null,
@@ -662,6 +701,290 @@ const initRecordStudio = () => {
     state.ingestServerUrl = serverUrl
   }
 
+  const setTranscriptionState = ({status, message = null, preview = null, finalText = null}) => {
+    state.transcriptionStatus = status
+    state.transcriptionMessage = message
+
+    if (preview !== null) {
+      state.transcriptionPreview = preview
+    }
+
+    if (finalText !== null) {
+      state.transcriptionFinalText = finalText
+    }
+  }
+
+  const readTranscriptText = event => {
+    if (typeof event?.transcript === "string" && event.transcript !== "") return event.transcript
+    if (typeof event?.text === "string" && event.text !== "") return event.text
+    if (typeof event?.delta === "string" && event.delta !== "") return event.delta
+
+    const transcriptChunk = event?.item?.content?.find?.(
+      contentItem => typeof contentItem?.transcript === "string" && contentItem.transcript !== ""
+    )
+
+    if (transcriptChunk) return transcriptChunk.transcript
+
+    return ""
+  }
+
+  const runTranscriptionForClip = async ({blob, mediaId}) => {
+    if (typeof state.transcriptionCleanup === "function") {
+      state.transcriptionCleanup()
+      state.transcriptionCleanup = null
+    }
+
+    setTranscriptionState({
+      status: "starting",
+      message: "Starting transcription session...",
+      preview: "",
+      finalText: "",
+    })
+    await render()
+
+    let socket = null
+    let channel = null
+    let peerConnection = null
+    let eventChannel = null
+    let audioElement = null
+    let audioUrl = null
+
+    const cleanup = () => {
+      if (audioElement) {
+        audioElement.pause()
+        audioElement.src = ""
+        audioElement = null
+      }
+
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl)
+        audioUrl = null
+      }
+
+      if (eventChannel) {
+        eventChannel.close()
+        eventChannel = null
+      }
+
+      if (peerConnection) {
+        peerConnection.close()
+        peerConnection = null
+      }
+
+      if (channel) {
+        channel.leave()
+        channel = null
+      }
+
+      if (socket) {
+        socket.disconnect()
+        socket = null
+      }
+    }
+
+    state.transcriptionCleanup = cleanup
+
+    try {
+      const sessionResponse = await fetch("/api/realtime/sessions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-requested-with": "XMLHttpRequest",
+        },
+        body: JSON.stringify({media_id: mediaId}),
+      })
+
+      if (!sessionResponse.ok) {
+        let reason = "Failed to bootstrap transcription session."
+        try {
+          const json = await sessionResponse.json()
+          if (json?.error) reason = json.error
+        } catch (_error) {
+        }
+        throw new Error(reason)
+      }
+
+      const session = await sessionResponse.json()
+      const transcriptionSessionId = session?.transcription_session_id
+      const openai = session?.openai
+
+      if (!transcriptionSessionId || !openai?.ephemeral_key || !openai?.model) {
+        throw new Error("Session bootstrap response was incomplete.")
+      }
+
+      setTranscriptionState({
+        status: "connecting",
+        message: "Connecting to transcription services...",
+      })
+      await render()
+
+      const channelConnection = await connectTranscriptChannel({
+        mediaId,
+        transcriptionSessionId,
+      })
+
+      socket = channelConnection.socket
+      channel = channelConnection.channel
+
+      peerConnection = new RTCPeerConnection()
+      eventChannel = peerConnection.createDataChannel("oai-events")
+
+      let completedCount = 0
+      let livePreview = ""
+
+      eventChannel.addEventListener("message", eventMessage => {
+        try {
+          const eventData = JSON.parse(eventMessage.data)
+
+          if (channel) {
+            void pushChannelEvent(channel, "transcript.audit", {
+              media_id: mediaId,
+              event_type: eventData?.type || "unknown",
+              item_id: eventData?.item_id || eventData?.item?.id || null,
+              payload: eventData,
+              source_ts: new Date().toISOString(),
+            }).catch(() => {})
+          }
+
+          if (eventData?.type === "conversation.item.input_audio_transcription.delta") {
+            const deltaText = readTranscriptText(eventData)
+            if (deltaText) {
+              livePreview = `${livePreview}${deltaText}`.slice(-2400)
+              setTranscriptionState({
+                status: "streaming",
+                message: "Transcribing captured audio...",
+                preview: livePreview,
+              })
+              void render()
+            }
+          }
+
+          if (eventData?.type === "conversation.item.input_audio_transcription.completed") {
+            const completedText = readTranscriptText(eventData)
+            if (!completedText) return
+
+            completedCount += 1
+            livePreview = ""
+            const nextFinalText = state.transcriptionFinalText
+              ? `${state.transcriptionFinalText}\n${completedText}`
+              : completedText
+
+            setTranscriptionState({
+              status: "streaming",
+              message: "Transcribing captured audio...",
+              preview: "",
+              finalText: nextFinalText,
+            })
+            void render()
+
+            if (channel) {
+              void pushChannelEvent(channel, "transcript.completed", {
+                transcription_session_id: transcriptionSessionId,
+                media_id: mediaId,
+                item_id: eventData?.item_id || eventData?.item?.id || `item-${completedCount}`,
+                seq: completedCount,
+                text: completedText,
+                source_ts: new Date().toISOString(),
+              }).catch(() => {})
+            }
+          }
+        } catch (_error) {
+        }
+      })
+
+      audioElement = document.createElement("audio")
+      audioElement.muted = true
+      audioUrl = URL.createObjectURL(blob)
+      audioElement.src = audioUrl
+
+      const captureStream =
+        typeof audioElement.captureStream === "function"
+          ? audioElement.captureStream()
+          : typeof audioElement.mozCaptureStream === "function"
+            ? audioElement.mozCaptureStream()
+            : null
+
+      if (!captureStream) {
+        throw new Error("Browser does not support audio capture stream for transcription.")
+      }
+
+      const [audioTrack] = captureStream.getAudioTracks()
+      if (!audioTrack) {
+        throw new Error("Recorded clip did not include a playable audio track.")
+      }
+
+      peerConnection.addTrack(audioTrack, captureStream)
+
+      const offer = await peerConnection.createOffer()
+      await peerConnection.setLocalDescription(offer)
+
+      const sdpResponse = await fetch(
+        `https://api.openai.com/v1/realtime?model=${encodeURIComponent(openai.model)}`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${openai.ephemeral_key}`,
+            "content-type": "application/sdp",
+          },
+          body: offer.sdp,
+        }
+      )
+
+      if (!sdpResponse.ok) {
+        throw new Error(`OpenAI SDP negotiation failed with status ${sdpResponse.status}.`)
+      }
+
+      const answerSdp = await sdpResponse.text()
+      await peerConnection.setRemoteDescription({type: "answer", sdp: answerSdp})
+
+      setTranscriptionState({
+        status: "streaming",
+        message: "Transcribing captured audio...",
+      })
+      await render()
+
+      await audioElement.play()
+
+      await new Promise((resolve, reject) => {
+        const handleEnded = () => {
+          audioElement.removeEventListener("ended", handleEnded)
+          audioElement.removeEventListener("error", handleError)
+          resolve()
+        }
+
+        const handleError = () => {
+          audioElement.removeEventListener("ended", handleEnded)
+          audioElement.removeEventListener("error", handleError)
+          reject(new Error("Recorded clip playback failed during transcription."))
+        }
+
+        audioElement.addEventListener("ended", handleEnded)
+        audioElement.addEventListener("error", handleError)
+      })
+
+      if (channel) {
+        await pushChannelEvent(channel, "transcript.stop", {reason: "completed"})
+      }
+
+      setTranscriptionState({
+        status: "completed",
+        message: state.transcriptionFinalText
+          ? "Transcription completed and saved."
+          : "Transcription completed with no text detected.",
+      })
+      await render()
+    } catch (error) {
+      setTranscriptionState({
+        status: "failed",
+        message: `Transcription failed (${error.message || "unknown error"}).`,
+      })
+      await render()
+    } finally {
+      cleanup()
+      state.transcriptionCleanup = null
+    }
+  }
+
   const handleRecordingStop = async () => {
     const blob = new Blob(state.chunks, {type: state.recorder?.mimeType || "video/webm"})
     state.chunks = []
@@ -740,10 +1063,37 @@ const initRecordStudio = () => {
           message: "Clip ingested to server.",
           serverUrl: ingestResult.url,
         })
+
+        if (clipRecord.had_audio) {
+          const rawMediaId = ingestResult.media_id ?? ingestResult.id
+          const mediaId = Number.parseInt(rawMediaId, 10)
+          if (Number.isInteger(mediaId) && mediaId > 0) {
+            void runTranscriptionForClip({blob, mediaId})
+          } else {
+            setTranscriptionState({
+              status: "failed",
+              message: "Transcription could not start because media_id was missing.",
+            })
+          }
+        } else {
+          setTranscriptionState({
+            status: "skipped",
+            message: "Clip saved without audio. Transcription skipped.",
+            preview: "",
+            finalText: "",
+          })
+        }
       } catch (error) {
         setIngestState({
           status: "failed",
           message: `Server ingest failed (${error.message || "unknown error"}).`,
+        })
+
+        setTranscriptionState({
+          status: "idle",
+          message: null,
+          preview: "",
+          finalText: "",
         })
       }
     }
@@ -771,6 +1121,16 @@ const initRecordStudio = () => {
       elements.ingestBadge.classList.add("badge-warning")
     } else if (state.ingestStatus === "failed") {
       elements.ingestBadge.classList.add("badge-error")
+    }
+
+    elements.transcriptionBadge.textContent = `Transcription: ${state.transcriptionStatus}`
+    elements.transcriptionBadge.classList.remove("badge-success", "badge-warning", "badge-error")
+    if (state.transcriptionStatus === "completed" || state.transcriptionStatus === "skipped") {
+      elements.transcriptionBadge.classList.add("badge-success")
+    } else if (state.transcriptionStatus === "starting" || state.transcriptionStatus === "connecting" || state.transcriptionStatus === "streaming") {
+      elements.transcriptionBadge.classList.add("badge-warning")
+    } else if (state.transcriptionStatus === "failed") {
+      elements.transcriptionBadge.classList.add("badge-error")
     }
 
     elements.captureMode.disabled = state.status === "recording" || state.status === "paused"
@@ -838,8 +1198,10 @@ const initRecordStudio = () => {
       setStageImage(waiting, "Waiting for source permission.", "Approve browser permission prompt to continue.")
     }
 
-    const statusMessage = state.errorMessage || state.ingestMessage
-    const hasFeedback = Boolean(state.lastCapture || statusMessage)
+    const ingestStatusMessage = state.errorMessage || state.ingestMessage
+    const transcriptionStatusMessage = state.transcriptionMessage
+    const transcriptPreviewText = state.transcriptionFinalText || state.transcriptionPreview
+    const hasFeedback = Boolean(state.lastCapture || ingestStatusMessage || transcriptionStatusMessage || transcriptPreviewText)
     elements.captureFeedbackPanel?.classList.toggle("hidden", !hasFeedback)
     elements.captureFeedbackPanel?.classList.toggle("flex", hasFeedback)
 
@@ -855,12 +1217,28 @@ const initRecordStudio = () => {
       setButtonDisabled(elements.lastDownload, true)
     }
 
-    if (statusMessage) {
-      elements.ingestStatusNote.textContent = statusMessage
+    if (ingestStatusMessage) {
+      elements.ingestStatusNote.textContent = ingestStatusMessage
       elements.ingestStatusNote.classList.remove("hidden")
     } else {
       elements.ingestStatusNote.textContent = ""
       elements.ingestStatusNote.classList.add("hidden")
+    }
+
+    if (transcriptionStatusMessage) {
+      elements.transcriptionStatusNote.textContent = transcriptionStatusMessage
+      elements.transcriptionStatusNote.classList.remove("hidden")
+    } else {
+      elements.transcriptionStatusNote.textContent = ""
+      elements.transcriptionStatusNote.classList.add("hidden")
+    }
+
+    if (transcriptPreviewText) {
+      elements.transcriptionPreviewText.textContent = transcriptPreviewText
+      elements.transcriptionPreviewPanel.classList.remove("hidden")
+    } else {
+      elements.transcriptionPreviewText.textContent = ""
+      elements.transcriptionPreviewPanel.classList.add("hidden")
     }
 
   }
@@ -888,6 +1266,13 @@ const initRecordStudio = () => {
 
   elements.start.addEventListener("click", async () => {
     if (!(state.status === "previewing" && state.previewStream)) return
+
+    setTranscriptionState({
+      status: "idle",
+      message: null,
+      preview: "",
+      finalText: "",
+    })
 
     const mimeType = findSupportedMimeType()
     state.chunks = []
@@ -947,6 +1332,10 @@ const initRecordStudio = () => {
     stopTimer()
     stopRecorderIfNeeded()
     stopPreviewStream()
+    if (typeof state.transcriptionCleanup === "function") {
+      state.transcriptionCleanup()
+      state.transcriptionCleanup = null
+    }
     if (state.lastCapture?.url) {
       URL.revokeObjectURL(state.lastCapture.url)
     }

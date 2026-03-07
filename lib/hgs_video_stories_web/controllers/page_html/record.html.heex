@@ -52,6 +52,12 @@
               >
                 Ingest: idle
               </span>
+              <span
+                id="studio-transcription-badge"
+                class="badge badge-outline bg-base-100/80 px-1.5 py-0 text-[9px] font-medium leading-none backdrop-blur"
+              >
+                Transcription: idle
+              </span>
             </div>
 
             <div class="pointer-events-auto flex items-center justify-center">
@@ -176,6 +182,20 @@
             </button>
           </div>
           <p id="ingest-status-note" class="hidden text-center text-xs text-base-content/70"></p>
+          <p
+            id="transcription-status-note"
+            class="hidden text-center text-xs text-base-content/70"
+          >
+          </p>
+          <div
+            id="transcription-preview-panel"
+            class="hidden w-full rounded-lg border border-base-300 bg-base-200/60 px-3 py-2"
+          >
+            <p class="text-[11px] font-medium uppercase tracking-wide text-base-content/60">
+              Transcript Preview
+            </p>
+            <p id="transcription-preview-text" class="mt-1 text-xs text-base-content/80"></p>
+          </div>
         </div>
         <span id="record-control-timer" class="hidden">00:00</span>
       </article>

@@ -40,9 +40,24 @@ defmodule HgsVideoStoriesWeb.TranscriptChannel do
              text: text,
              source_ts: source_ts
            }) do
+      :telemetry.execute(
+        [:hgs_video_stories, :transcription, :segment, :upserted],
+        %{count: 1},
+        %{
+          media_id: socket.assigns.media_id,
+          transcription_session_id: socket.assigns.transcription_session_id
+        }
+      )
+
       {:reply, {:ok, %{status: "ok"}}, socket}
     else
       {:error, reason} ->
+        :telemetry.execute(
+          [:hgs_video_stories, :transcription, :segment, :upsert_failed],
+          %{count: 1},
+          %{media_id: socket.assigns.media_id, error: reason}
+        )
+
         {:reply, {:error, %{error: reason}}, socket}
     end
   end
@@ -66,9 +81,24 @@ defmodule HgsVideoStoriesWeb.TranscriptChannel do
              source_ts: source_ts,
              payload: event_payload
            }) do
+      :telemetry.execute(
+        [:hgs_video_stories, :transcription, :event_log, :inserted],
+        %{count: 1},
+        %{
+          media_id: socket.assigns.media_id,
+          transcription_session_id: socket.assigns.transcription_session_id
+        }
+      )
+
       {:reply, {:ok, %{status: "ok"}}, socket}
     else
       {:error, reason} ->
+        :telemetry.execute(
+          [:hgs_video_stories, :transcription, :event_log, :insert_failed],
+          %{count: 1},
+          %{media_id: socket.assigns.media_id, error: reason}
+        )
+
         {:reply, {:error, %{error: reason}}, socket}
     end
   end
@@ -79,12 +109,33 @@ defmodule HgsVideoStoriesWeb.TranscriptChannel do
          true <- session.status == :active,
          {:ok, status} <- parse_stop_status(payload["reason"]),
          {:ok, _updated_session} <- MediaTranscription.stop_session(session, status) do
+      :telemetry.execute(
+        [:hgs_video_stories, :transcription, :session, :stopped],
+        %{count: 1},
+        %{
+          media_id: socket.assigns.media_id,
+          transcription_session_id: socket.assigns.transcription_session_id
+        }
+      )
+
       {:reply, {:ok, %{status: "ok"}}, socket}
     else
       false ->
+        :telemetry.execute(
+          [:hgs_video_stories, :transcription, :session, :stop_failed],
+          %{count: 1},
+          %{media_id: socket.assigns.media_id, error: "session is not active"}
+        )
+
         {:reply, {:error, %{error: "session is not active"}}, socket}
 
       {:error, reason} ->
+        :telemetry.execute(
+          [:hgs_video_stories, :transcription, :session, :stop_failed],
+          %{count: 1},
+          %{media_id: socket.assigns.media_id, error: reason}
+        )
+
         {:reply, {:error, %{error: reason}}, socket}
     end
   end
