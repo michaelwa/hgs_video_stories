@@ -725,6 +725,10 @@ defmodule HgsVideoStoriesWeb.MediaLibraryLive do
 
   defp format_created_at(nil), do: "-"
 
+  defp format_created_at(%DateTime{} = datetime) do
+    Calendar.strftime(datetime, "%b %-d, %Y, %-I:%M %p")
+  end
+
   defp format_created_at(iso8601) do
     case DateTime.from_iso8601(iso8601) do
       {:ok, datetime, _offset} -> Calendar.strftime(datetime, "%b %-d, %Y, %-I:%M %p")
