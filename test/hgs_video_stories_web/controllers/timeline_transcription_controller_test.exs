@@ -91,6 +91,15 @@ defmodule HgsVideoStoriesWeb.TimelineTranscriptionControllerTest do
     media_id = System.unique_integer([:positive])
     assert {:ok, session} = MediaTranscription.create_session(%{media_id: media_id})
 
+    assert {:ok, _preview_segment} =
+             MediaTranscription.upsert_completed_segment(%{
+               transcription_session_id: session.id,
+               media_id: media_id,
+               item_id: "preview-1",
+               seq: 1,
+               text: "Four score"
+             })
+
     :ok =
       MediaTranscription.replace_timeline_segments(session.id, media_id, [
         %{text: "Four score", start_ms: 0, end_ms: 1400}
@@ -109,10 +118,20 @@ defmodule HgsVideoStoriesWeb.TimelineTranscriptionControllerTest do
     assert response["timeline_transcription"]["status"] == "completed"
     assert response["timeline_transcription"]["timeline_available"] == true
 
-    assert response["segments"] == [
+    assert response["preview_segments"] == [
+             %{
+               "end_ms" => nil,
+               "id" => response["preview_segments"] |> hd() |> Map.fetch!("id"),
+               "seq" => 1,
+               "start_ms" => nil,
+               "text" => "Four score"
+             }
+           ]
+
+    assert response["timeline_segments"] == [
              %{
                "end_ms" => 1400,
-               "id" => response["segments"] |> hd() |> Map.fetch!("id"),
+               "id" => response["timeline_segments"] |> hd() |> Map.fetch!("id"),
                "seq" => 1,
                "start_ms" => 0,
                "text" => "Four score"

@@ -180,6 +180,9 @@ const initMediaLibrary = () => {
     timelinePanel: document.getElementById("media-timeline-panel"),
     timelineSummary: document.getElementById("media-timeline-summary"),
     timelineSegments: document.getElementById("media-timeline-segments"),
+    timelineModeToggle: document.getElementById("media-timeline-mode-toggle"),
+    timelineModeRaw: document.getElementById("media-timeline-mode-raw"),
+    timelineModeAccurate: document.getElementById("media-timeline-mode-accurate"),
   }
 
   const state = {
@@ -190,6 +193,7 @@ const initMediaLibrary = () => {
     timelineDetails: new Map(),
     channelConnection: null,
     timelinePanelOpen: false,
+    timelinePanelMode: "raw",
   }
 
   const decorateClip = clip => {
@@ -223,7 +227,7 @@ const initMediaLibrary = () => {
   }
 
   const ensureTimelineDetailLoaded = async clip => {
-    if (!clip || clip.timeline_status !== "completed") return null
+    if (!clip || !clip.server_url || !clip.had_audio) return null
 
     const cached = state.timelineDetails.get(clip.id)
     if (cached) return cached
@@ -233,11 +237,63 @@ const initMediaLibrary = () => {
     return detail
   }
 
+  const renderTimelineModeToggle = clip => {
+    const accurateAvailable = clip?.timeline_status === "completed"
+
+    elements.timelineModeToggle.classList.toggle("hidden", !clip)
+    elements.timelineModeRaw.classList.toggle("btn-primary", state.timelinePanelMode === "raw")
+    elements.timelineModeRaw.classList.toggle("btn-ghost", state.timelinePanelMode !== "raw")
+    elements.timelineModeAccurate.classList.toggle("btn-primary", state.timelinePanelMode === "accurate")
+    elements.timelineModeAccurate.classList.toggle("btn-ghost", state.timelinePanelMode !== "accurate")
+    elements.timelineModeAccurate.disabled = !accurateAvailable
+  }
+
   const renderTimelinePanel = async clip => {
     elements.timelineSegments.replaceChildren()
 
     if (!clip || !state.timelinePanelOpen) {
       elements.timelinePanel.classList.add("hidden")
+      elements.timelineModeToggle.classList.add("hidden")
+      return
+    }
+
+    renderTimelineModeToggle(clip)
+
+    const detail = await ensureTimelineDetailLoaded(clip)
+    const previewSegments = Array.isArray(detail?.preview_segments) ? detail.preview_segments : []
+    const accurateSegments = Array.isArray(detail?.timeline_segments) ? detail.timeline_segments : []
+
+    if (state.timelinePanelMode === "raw") {
+      elements.timelineSummary.textContent =
+        previewSegments.length > 0
+          ? `${previewSegments.length} raw transcript segment${previewSegments.length === 1 ? "" : "s"} from the live preview pass.`
+          : "No raw transcript segments are available."
+
+      if (previewSegments.length === 0) {
+        const item = document.createElement("li")
+        item.className = "rounded-xl border border-dashed border-base-300 bg-base-200/40 px-4 py-3 text-sm text-base-content/65"
+        item.textContent = "No raw transcript segments are available."
+        elements.timelineSegments.appendChild(item)
+      } else {
+        previewSegments.forEach(segment => {
+          const item = document.createElement("li")
+          item.className = "rounded-2xl border border-base-300 bg-base-200/50 px-4 py-3"
+
+          const seq = document.createElement("p")
+          seq.className = "text-[11px] font-medium uppercase tracking-wide text-base-content/55"
+          seq.textContent = `Raw Segment ${segment.seq}`
+
+          const text = document.createElement("p")
+          text.className = "mt-2 text-sm text-base-content/80"
+          text.textContent = segment.text
+
+          item.appendChild(seq)
+          item.appendChild(text)
+          elements.timelineSegments.appendChild(item)
+        })
+      }
+
+      elements.timelinePanel.classList.remove("hidden")
       return
     }
 
@@ -253,21 +309,18 @@ const initMediaLibrary = () => {
       return
     }
 
-    const detail = await ensureTimelineDetailLoaded(clip)
-    const segments = Array.isArray(detail?.segments) ? detail.segments : []
-
     elements.timelineSummary.textContent =
-      segments.length > 0
-        ? `${segments.length} timestamped segment${segments.length === 1 ? "" : "s"} from the accurate timeline pass.`
+      accurateSegments.length > 0
+        ? `${accurateSegments.length} timestamped segment${accurateSegments.length === 1 ? "" : "s"} from the accurate timeline pass.`
         : "Timeline completed, but no segments were returned."
 
-    if (segments.length === 0) {
+    if (accurateSegments.length === 0) {
       const item = document.createElement("li")
       item.className = "rounded-xl border border-dashed border-base-300 bg-base-200/40 px-4 py-3 text-sm text-base-content/65"
       item.textContent = "No timeline segments are available."
       elements.timelineSegments.appendChild(item)
     } else {
-      segments.forEach(segment => {
+      accurateSegments.forEach(segment => {
         const item = document.createElement("li")
         item.className = "rounded-2xl border border-base-300 bg-base-200/50 px-4 py-3"
 
@@ -329,7 +382,7 @@ const initMediaLibrary = () => {
     elements.saveServer.disabled = false
     elements.generateTimeline.disabled = timelineButtonDisabled(clip)
     elements.generateTimeline.textContent = timelineButtonLabel(clip)
-    elements.viewTimeline.disabled = clip.timeline_status !== "completed"
+    elements.viewTimeline.disabled = !clip.server_url || !clip.had_audio
     elements.viewTimeline.textContent = state.timelinePanelOpen ? "Hide Timeline" : "View Timeline"
     elements.download.disabled = false
     elements.delete.disabled = false
@@ -418,6 +471,7 @@ const initMediaLibrary = () => {
       button.addEventListener("click", () => {
         state.selectedId = clip.id
         state.timelinePanelOpen = false
+        state.timelinePanelMode = "raw"
         render()
           .then(() => {
             elements.selectedPanel?.scrollIntoView({
@@ -586,6 +640,14 @@ const initMediaLibrary = () => {
         }
       })
       .catch(() => {})
+  })
+  elements.timelineModeRaw.addEventListener("click", () => {
+    state.timelinePanelMode = "raw"
+    render().catch(() => {})
+  })
+  elements.timelineModeAccurate.addEventListener("click", () => {
+    state.timelinePanelMode = "accurate"
+    render().catch(() => {})
   })
 
   window.addEventListener("beforeunload", revokePreviewUrl)

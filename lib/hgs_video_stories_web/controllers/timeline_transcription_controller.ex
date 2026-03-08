@@ -50,7 +50,8 @@ defmodule HgsVideoStoriesWeb.TimelineTranscriptionController do
 
       json(conn, %{
         timeline_transcription: summary,
-        segments: serialize_segments(media_id)
+        preview_segments: serialize_segments(media_id, :preview),
+        timeline_segments: serialize_segments(media_id, :timeline)
       })
     else
       {:error, :invalid_media_id, message} ->
@@ -121,9 +122,9 @@ defmodule HgsVideoStoriesWeb.TimelineTranscriptionController do
     }
   end
 
-  defp serialize_segments(media_id) do
+  defp serialize_segments(media_id, display_mode) do
     media_id
-    |> MediaTranscription.list_segments_for_media(display_mode: :timeline)
+    |> MediaTranscription.list_segments_for_media(display_mode: display_mode)
     |> Enum.map(fn segment ->
       %{
         id: segment.id,
