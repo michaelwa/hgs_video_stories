@@ -77,6 +77,25 @@ const pushChannelEvent = (channel, event, payload) =>
       .receive("timeout", () => reject(new Error("Channel event timed out.")))
   })
 
+const negotiateRealtimeSdp = async ({offerSdp, ephemeralKey, model}) => {
+  const response = await fetch("https://api.openai.com/v1/realtime/calls", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${ephemeralKey}`,
+      "content-type": "application/sdp",
+    },
+    body: offerSdp,
+  })
+
+  if (response.ok) {
+    return response.text()
+  }
+
+  const errorText = (await response.text()).trim()
+  const detail = errorText || `model=${model}, status=${response.status}`
+  throw new Error(`OpenAI SDP negotiation failed: status ${response.status} (${detail})`)
+}
+
 const initRecordStudio = () => {
   const existingCleanup = window[GLOBAL_CLEANUP_KEY]
   if (typeof existingCleanup === "function") {
@@ -748,6 +767,7 @@ const initRecordStudio = () => {
     let eventChannel = null
     let audioElement = null
     let audioUrl = null
+    let audioContext = null
 
     const cleanup = () => {
       if (audioElement) {
@@ -759,6 +779,11 @@ const initRecordStudio = () => {
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl)
         audioUrl = null
+      }
+
+      if (audioContext) {
+        audioContext.close().catch(() => {})
+        audioContext = null
       }
 
       if (eventChannel) {
@@ -894,47 +919,73 @@ const initRecordStudio = () => {
 
       audioElement = document.createElement("audio")
       audioElement.muted = true
+      audioElement.preload = "auto"
       audioUrl = URL.createObjectURL(blob)
       audioElement.src = audioUrl
 
-      const captureStream =
+      await new Promise((resolve, reject) => {
+        const handleLoaded = () => {
+          audioElement.removeEventListener("loadedmetadata", handleLoaded)
+          audioElement.removeEventListener("error", handleError)
+          resolve()
+        }
+
+        const handleError = () => {
+          audioElement.removeEventListener("loadedmetadata", handleLoaded)
+          audioElement.removeEventListener("error", handleError)
+          reject(new Error("Recorded clip metadata could not be loaded."))
+        }
+
+        audioElement.addEventListener("loadedmetadata", handleLoaded)
+        audioElement.addEventListener("error", handleError)
+      })
+
+      await audioElement.play()
+
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      let outboundStream =
         typeof audioElement.captureStream === "function"
           ? audioElement.captureStream()
           : typeof audioElement.mozCaptureStream === "function"
             ? audioElement.mozCaptureStream()
             : null
 
-      if (!captureStream) {
+      if (!outboundStream || outboundStream.getAudioTracks().length === 0) {
+        if (!window.AudioContext) {
+          throw new Error("Browser does not support audio capture stream for transcription.")
+        }
+
+        audioContext = new AudioContext()
+        if (audioContext.state === "suspended") {
+          await audioContext.resume()
+        }
+
+        const sourceNode = audioContext.createMediaElementSource(audioElement)
+        const destinationNode = audioContext.createMediaStreamDestination()
+        sourceNode.connect(destinationNode)
+        outboundStream = destinationNode.stream
+      }
+
+      if (!outboundStream) {
         throw new Error("Browser does not support audio capture stream for transcription.")
       }
 
-      const [audioTrack] = captureStream.getAudioTracks()
+      const [audioTrack] = outboundStream.getAudioTracks()
       if (!audioTrack) {
         throw new Error("Recorded clip did not include a playable audio track.")
       }
 
-      peerConnection.addTrack(audioTrack, captureStream)
+      peerConnection.addTrack(audioTrack, outboundStream)
 
       const offer = await peerConnection.createOffer()
       await peerConnection.setLocalDescription(offer)
 
-      const sdpResponse = await fetch(
-        `https://api.openai.com/v1/realtime?model=${encodeURIComponent(openai.model)}`,
-        {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${openai.ephemeral_key}`,
-            "content-type": "application/sdp",
-          },
-          body: offer.sdp,
-        }
-      )
-
-      if (!sdpResponse.ok) {
-        throw new Error(`OpenAI SDP negotiation failed with status ${sdpResponse.status}.`)
-      }
-
-      const answerSdp = await sdpResponse.text()
+      const answerSdp = await negotiateRealtimeSdp({
+        offerSdp: offer.sdp,
+        ephemeralKey: openai.ephemeral_key,
+        model: openai.model,
+      })
       await peerConnection.setRemoteDescription({type: "answer", sdp: answerSdp})
 
       setTranscriptionState({
@@ -942,8 +993,6 @@ const initRecordStudio = () => {
         message: "Transcribing captured audio...",
       })
       await render()
-
-      await audioElement.play()
 
       await new Promise((resolve, reject) => {
         const handleEnded = () => {
@@ -1127,7 +1176,7 @@ const initRecordStudio = () => {
     elements.transcriptionBadge.classList.remove("badge-success", "badge-warning", "badge-error")
     if (state.transcriptionStatus === "completed" || state.transcriptionStatus === "skipped") {
       elements.transcriptionBadge.classList.add("badge-success")
-    } else if (state.transcriptionStatus === "starting" || state.transcriptionStatus === "connecting" || state.transcriptionStatus === "streaming") {
+    } else if (state.transcriptionStatus === "queued" || state.transcriptionStatus === "starting" || state.transcriptionStatus === "connecting" || state.transcriptionStatus === "streaming") {
       elements.transcriptionBadge.classList.add("badge-warning")
     } else if (state.transcriptionStatus === "failed") {
       elements.transcriptionBadge.classList.add("badge-error")
@@ -1267,9 +1316,10 @@ const initRecordStudio = () => {
   elements.start.addEventListener("click", async () => {
     if (!(state.status === "previewing" && state.previewStream)) return
 
+    const recordingHasAudio = (state.previewStream?.getAudioTracks()?.length || 0) > 0
     setTranscriptionState({
-      status: "idle",
-      message: null,
+      status: recordingHasAudio ? "queued" : "idle",
+      message: recordingHasAudio ? "Transcription will begin after recording is uploaded." : null,
       preview: "",
       finalText: "",
     })

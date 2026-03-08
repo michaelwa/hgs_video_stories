@@ -13,7 +13,7 @@ config :hgs_video_stories,
 
 config :hgs_video_stories, :openai_realtime,
   base_url: "https://api.openai.com",
-  model: "gpt-4o-transcribe",
+  transcription_model: "gpt-4o-transcribe",
   turn_detection: "server_vad"
 
 # Configure the endpoint

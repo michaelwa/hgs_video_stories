@@ -16,7 +16,7 @@ defmodule HgsVideoStories.OpenAI.RealtimeSessionClient do
     with true <- is_binary(api_key) and api_key != "",
          {:ok, response} <-
            Req.post(
-             url: "#{get_config(:base_url)}/v1/realtime/sessions",
+             url: "#{get_config(:base_url)}/v1/realtime/client_secrets",
              headers: [
                {"authorization", "Bearer #{api_key}"},
                {"content-type", "application/json"}
@@ -38,28 +38,36 @@ defmodule HgsVideoStories.OpenAI.RealtimeSessionClient do
   end
 
   defp request_body(_params) do
-    model = get_config(:model)
+    transcription_model = get_config(:transcription_model)
     turn_detection = get_config(:turn_detection)
 
     %{
-      model: model,
-      input_audio_transcription: %{
-        model: model
-      },
-      turn_detection: %{type: turn_detection}
+      session: %{
+        type: "transcription",
+        audio: %{
+          input: %{
+            transcription: %{
+              model: transcription_model
+            },
+            turn_detection: %{
+              type: turn_detection
+            }
+          }
+        }
+      }
     }
   end
 
   defp normalize_response(%Req.Response{status: status, body: body}) when status in [200, 201] do
-    ephemeral_key = get_in(body, ["client_secret", "value"])
+    ephemeral_key = body["value"] || get_in(body, ["client_secret", "value"])
 
     if is_binary(ephemeral_key) and ephemeral_key != "" do
       {:ok,
        %{
          ephemeral_key: ephemeral_key,
-         expires_at: get_in(body, ["client_secret", "expires_at"]),
-         model: body["model"] || get_config(:model),
-         turn_detection: get_in(body, ["turn_detection", "type"])
+         expires_at: body["expires_at"] || get_in(body, ["client_secret", "expires_at"]),
+         model: get_config(:transcription_model),
+         turn_detection: get_config(:turn_detection)
        }}
     else
       {:error, :invalid_response, "OpenAI response did not include a client secret."}
