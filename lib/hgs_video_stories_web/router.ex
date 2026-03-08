@@ -29,6 +29,9 @@ defmodule HgsVideoStoriesWeb.Router do
     get "/server_count", ServerCountController, :show
     post "/server_count/increment", ServerCountController, :increment
     post "/server_count/decrement", ServerCountController, :decrement
+    get "/media_clips/timeline_transcriptions", TimelineTranscriptionController, :index
+    get "/media_clips/:media_id/timeline_transcription", TimelineTranscriptionController, :show
+    post "/media_clips/:media_id/timeline_transcription", TimelineTranscriptionController, :create
     post "/media_clips", MediaClipController, :create
     post "/realtime/sessions", RealtimeSessionController, :create
   end

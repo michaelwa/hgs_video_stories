@@ -16,6 +16,10 @@ config :hgs_video_stories, :openai_realtime,
   transcription_model: "gpt-4o-transcribe",
   turn_detection: "server_vad"
 
+config :hgs_video_stories, :openai_timeline,
+  base_url: "https://api.openai.com",
+  model: "whisper-1"
+
 # Configure the endpoint
 config :hgs_video_stories, HgsVideoStoriesWeb.Endpoint,
   url: [host: "localhost"],

@@ -101,4 +101,24 @@ defmodule HgsVideoStories.MediaTranscriptionTest do
     assert length(logs) == 1
     assert hd(logs).payload == %{"text" => "hello world"}
   end
+
+  test "timeline transcription summary reflects completed timeline segments" do
+    media_id = System.unique_integer([:positive])
+
+    assert {:ok, session} = MediaTranscription.create_session(%{media_id: media_id})
+    assert {:ok, _timeline} = MediaTranscription.queue_timeline_transcription(media_id)
+
+    :ok =
+      MediaTranscription.replace_timeline_segments(session.id, media_id, [
+        %{text: "Four score", start_ms: 0, end_ms: 1400}
+      ])
+
+    assert {:ok, _timeline} = MediaTranscription.mark_timeline_transcription_completed(media_id)
+
+    summary = MediaTranscription.timeline_transcription_summary(media_id)
+
+    assert summary.status == :completed
+    assert summary.timeline_available == true
+    assert summary.segment_count == 1
+  end
 end

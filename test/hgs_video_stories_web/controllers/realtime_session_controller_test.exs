@@ -1,5 +1,5 @@
 defmodule HgsVideoStoriesWeb.RealtimeSessionControllerTest do
-  use HgsVideoStoriesWeb.ConnCase, async: true
+  use HgsVideoStoriesWeb.ConnCase, async: false
 
   alias HgsVideoStories.MediaTranscription
 

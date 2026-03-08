@@ -14,6 +14,7 @@ defmodule HgsVideoStories.Application do
        repos: Application.fetch_env!(:hgs_video_stories, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:hgs_video_stories, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: HgsVideoStories.PubSub},
+      {Task.Supervisor, name: HgsVideoStories.TaskSupervisor},
       HgsVideoStories.ServerCounter,
       HgsVideoStories.LiveGroupCounter,
       # Start a worker by calling: HgsVideoStories.Worker.start_link(arg)

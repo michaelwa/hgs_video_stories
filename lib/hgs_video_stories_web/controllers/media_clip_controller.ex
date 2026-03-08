@@ -1,6 +1,8 @@
 defmodule HgsVideoStoriesWeb.MediaClipController do
   use HgsVideoStoriesWeb, :controller
 
+  alias HgsVideoStories.MediaClips
+
   def create(conn, params) do
     with %Plug.Upload{} = upload <- params["clip"],
          true <- valid_video_upload?(upload),
@@ -57,16 +59,7 @@ defmodule HgsVideoStoriesWeb.MediaClipController do
   end
 
   defp storage_dir do
-    Application.get_env(
-      :hgs_video_stories,
-      :media_clip_storage_dir,
-      Path.join([
-        to_string(:code.priv_dir(:hgs_video_stories)),
-        "static",
-        "uploads",
-        "media_clips"
-      ])
-    )
+    MediaClips.storage_dir()
   end
 
   defp sanitize_title(nil), do: "captured-clip"

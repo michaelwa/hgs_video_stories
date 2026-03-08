@@ -28,8 +28,7 @@ const MICROPHONE_MODES = new Set(["camera", "screen", "mic_only"])
 const MIC_ONLY_MODES = new Set(["mic_only"])
 const DEFAULT_STAGE_FRAME_CLASSES = ["h-52", "sm:h-80", "lg:h-[26rem]"]
 const AUDIO_STAGE_FRAME_CLASSES = ["h-36", "sm:h-48", "lg:h-56"]
-const TRANSCRIPTION_CHUNK_MS = 1500
-const FINAL_TRANSCRIPTION_FLUSH_MS = 1200
+const TIMELINE_POLL_INTERVAL_MS = 3000
 
 const modeUsesCamera = mode => CAMERA_MODES.has(mode)
 const modeUsesMicrophone = mode => MICROPHONE_MODES.has(mode)
@@ -114,10 +113,48 @@ const sendRealtimeEvent = (eventChannel, payload) => {
   eventChannel.send(JSON.stringify(payload))
 }
 
-const wait = milliseconds =>
-  new Promise(resolve => {
-    window.setTimeout(resolve, milliseconds)
+const loadTimelineTranscription = async mediaId => {
+  const response = await fetch(`/api/media_clips/${mediaId}/timeline_transcription`, {
+    headers: {
+      accept: "application/json",
+      "x-requested-with": "XMLHttpRequest",
+    },
   })
+
+  if (!response.ok) {
+    let reason = "Could not load timeline transcription."
+    try {
+      const json = await response.json()
+      if (json?.error) reason = json.error
+    } catch (_error) {
+    }
+    throw new Error(reason)
+  }
+
+  return response.json()
+}
+
+const queueTimelineTranscription = async mediaId => {
+  const response = await fetch(`/api/media_clips/${mediaId}/timeline_transcription`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  })
+
+  if (!response.ok) {
+    let reason = "Could not queue timeline transcription."
+    try {
+      const json = await response.json()
+      if (json?.error) reason = json.error
+    } catch (_error) {
+    }
+    throw new Error(reason)
+  }
+
+  return response.json()
+}
 
 const negotiateRealtimeSdp = async ({offerSdp, ephemeralKey, model}) => {
   const response = await fetch("https://api.openai.com/v1/realtime/calls", {
@@ -174,6 +211,8 @@ const initRecordStudio = () => {
     stageCaption: document.getElementById("stage-caption"),
     lastCaptureNote: document.getElementById("last-capture-note"),
     lastDownload: document.getElementById("last-download"),
+    timelineGenerationToggle: document.getElementById("timeline-generation-toggle"),
+    timelineGenerationButton: document.getElementById("timeline-generation-button"),
     ingestStatusNote: document.getElementById("ingest-status-note"),
     transcriptionStatusNote: document.getElementById("transcription-status-note"),
     transcriptionDisplayToggle: document.getElementById("transcription-display-toggle"),
@@ -213,13 +252,12 @@ const initRecordStudio = () => {
     transcriptionPreview: "",
     transcriptionFinalText: "",
     transcriptionTimelineSegments: [],
+    timelineGenerationEnabled: false,
+    timelinePollRef: null,
+    timelineStatus: "idle",
+    timelineStatusMessage: null,
     transcriptionCleanup: null,
     transcriptionConnection: null,
-    transcriptionRecordingStartedAt: null,
-    transcriptionChunkStartMs: 0,
-    transcriptionPendingChunks: [],
-    transcriptionPendingTimelineByItemId: {},
-    transcriptionCommitIntervalRef: null,
     audioContext: null,
     audioWaveRef: null,
     audioSourceNode: null,
@@ -790,47 +828,71 @@ const initRecordStudio = () => {
     }
   }
 
-  const resetTranscriptionBuffers = () => {
-    state.transcriptionPreview = ""
-    state.transcriptionFinalText = ""
-    state.transcriptionTimelineSegments = []
-    state.transcriptionPendingChunks = []
-    state.transcriptionPendingTimelineByItemId = {}
-    state.transcriptionChunkStartMs = 0
-    state.transcriptionRecordingStartedAt = null
+  const setTimelineTranscriptionState = ({status, message = null, segments = null}) => {
+    state.timelineStatus = status
+    state.timelineStatusMessage = message
+
+    if (segments !== null) {
+      state.transcriptionTimelineSegments = segments
+    }
   }
 
-  const appendTimelineSegment = segment => {
-    const existingIndex = state.transcriptionTimelineSegments.findIndex(
-      existing =>
-        existing.itemId === segment.itemId &&
-        existing.seq === segment.seq
-    )
-
-    if (existingIndex >= 0) {
-      state.transcriptionTimelineSegments.splice(existingIndex, 1, segment)
-      return
+  const stopTimelinePolling = () => {
+    if (state.timelinePollRef) {
+      window.clearInterval(state.timelinePollRef)
+      state.timelinePollRef = null
     }
-
-    state.transcriptionTimelineSegments.push(segment)
-    state.transcriptionTimelineSegments.sort((left, right) => left.startMs - right.startMs || left.seq - right.seq)
   }
 
-  const startTranscriptionChunkLoop = () => {
-    if (!state.transcriptionConnection) return
+  const syncTimelineTranscription = async mediaId => {
+    const payload = await loadTimelineTranscription(mediaId)
+    const timeline = payload?.timeline_transcription || {}
+    const segments = Array.isArray(payload?.segments) ? payload.segments : []
 
-    if (state.transcriptionCommitIntervalRef) {
-      window.clearInterval(state.transcriptionCommitIntervalRef)
+    setTimelineTranscriptionState({
+      status: timeline.status || "missing",
+      message: timeline.error_message || null,
+      segments: segments.map(segment => ({
+        itemId: `timeline-${segment.seq}`,
+        seq: segment.seq,
+        startMs: segment.start_ms || 0,
+        endMs: segment.end_ms || 0,
+        text: segment.text || "",
+      })),
+    })
+
+    if (timeline.status === "completed" || timeline.status === "failed" || timeline.status === "missing") {
+      stopTimelinePolling()
     }
+  }
 
-    state.transcriptionCommitIntervalRef = window.setInterval(() => {
-      if (state.status !== "recording" || state.transcriptionRecordingStartedAt === null) return
+  const startTimelinePolling = mediaId => {
+    stopTimelinePolling()
+    state.timelinePollRef = window.setInterval(() => {
+      void syncTimelineTranscription(mediaId).then(() => render()).catch(() => {})
+    }, TIMELINE_POLL_INTERVAL_MS)
+  }
 
-      const elapsedMs = Math.round(performance.now() - state.transcriptionRecordingStartedAt)
-      if (elapsedMs - state.transcriptionChunkStartMs >= TRANSCRIPTION_CHUNK_MS) {
-        void state.transcriptionConnection.commitTranscriptionChunk()
-      }
-    }, 250)
+  const queueAccurateTimelineTranscription = async mediaId => {
+    setTimelineTranscriptionState({
+      status: "pending",
+      message: "Queueing accurate timeline transcription...",
+      segments: [],
+    })
+    await render()
+
+    await queueTimelineTranscription(mediaId)
+
+    setTimelineTranscriptionState({
+      status: "pending",
+      message: "Timeline transcription queued. Processing starts after upload.",
+    })
+
+    await syncTimelineTranscription(mediaId)
+
+    if (state.timelineStatus === "pending" || state.timelineStatus === "processing") {
+      startTimelinePolling(mediaId)
+    }
   }
 
   const readTranscriptText = event => {
@@ -867,10 +929,11 @@ const initRecordStudio = () => {
       return
     }
 
-    resetTranscriptionBuffers()
     setTranscriptionState({
       status: "starting",
       message: "Starting live transcription...",
+      preview: "",
+      finalText: "",
     })
     await render()
 
@@ -881,11 +944,6 @@ const initRecordStudio = () => {
     let completedCount = 0
 
     const cleanup = () => {
-      if (state.transcriptionCommitIntervalRef) {
-        window.clearInterval(state.transcriptionCommitIntervalRef)
-        state.transcriptionCommitIntervalRef = null
-      }
-
       if (eventChannel) {
         eventChannel.close()
         eventChannel = null
@@ -908,31 +966,6 @@ const initRecordStudio = () => {
     }
 
     state.transcriptionCleanup = cleanup
-
-    const commitTranscriptionChunk = async ({force = false} = {}) => {
-      if (!eventChannel || eventChannel.readyState !== "open" || state.transcriptionRecordingStartedAt === null) {
-        return
-      }
-
-      const elapsedMs = Math.max(0, Math.round(performance.now() - state.transcriptionRecordingStartedAt))
-      const nextEndMs = force ? elapsedMs : elapsedMs - (elapsedMs % 1)
-      const startMs = state.transcriptionChunkStartMs
-
-      if (nextEndMs <= startMs) {
-        return
-      }
-
-      state.transcriptionPendingChunks.push({
-        startMs,
-        endMs: nextEndMs,
-      })
-
-      sendRealtimeEvent(eventChannel, {
-        type: "input_audio_buffer.commit",
-      })
-
-      state.transcriptionChunkStartMs = nextEndMs
-    }
 
     try {
       const sessionResponse = await fetch("/api/realtime/sessions", {
@@ -982,7 +1015,6 @@ const initRecordStudio = () => {
         channel,
         transcriptionSessionId,
         eventChannel,
-        commitTranscriptionChunk,
       }
 
       eventChannel.addEventListener("message", eventMessage => {
@@ -999,16 +1031,12 @@ const initRecordStudio = () => {
             }).catch(() => {})
           }
 
-          if (eventData?.type === "input_audio_buffer.committed" && eventData?.item_id) {
-            const chunkWindow = state.transcriptionPendingChunks.shift()
-            if (chunkWindow) {
-              state.transcriptionPendingTimelineByItemId[eventData.item_id] = chunkWindow
-            }
-          }
-
           if (eventData?.type === "conversation.item.input_audio_transcription.delta") {
             const deltaText = readTranscriptText(eventData)
             if (deltaText) {
+              // Keep preview on the model's native turn boundaries. The earlier manual
+              // chunk-commit experiment produced timeline-like windows, but it also
+              // degraded transcription quality enough that we do not use it in runtime.
               const nextPreview = `${state.transcriptionPreview}${deltaText}`.slice(-2400)
               setTranscriptionState({
                 status: "streaming",
@@ -1028,34 +1056,6 @@ const initRecordStudio = () => {
               ? `${state.transcriptionFinalText}\n${completedText}`
               : completedText
             const itemId = eventData?.item_id || eventData?.item?.id || `item-${completedCount}`
-            const chunkWindow = state.transcriptionPendingTimelineByItemId[itemId]
-
-            if (chunkWindow) {
-              delete state.transcriptionPendingTimelineByItemId[itemId]
-
-              const timelineSegment = {
-                itemId,
-                seq: completedCount,
-                startMs: chunkWindow.startMs,
-                endMs: chunkWindow.endMs,
-                text: completedText,
-              }
-
-              appendTimelineSegment(timelineSegment)
-
-              if (channel) {
-                void pushChannelEvent(channel, "transcript.timeline_completed", {
-                  transcription_session_id: transcriptionSessionId,
-                  media_id: mediaId,
-                  item_id: timelineSegment.itemId,
-                  seq: timelineSegment.seq,
-                  text: timelineSegment.text,
-                  start_ms: timelineSegment.startMs,
-                  end_ms: timelineSegment.endMs,
-                  source_ts: new Date().toISOString(),
-                }).catch(() => {})
-              }
-            }
 
             setTranscriptionState({
               status: "streaming",
@@ -1094,22 +1094,9 @@ const initRecordStudio = () => {
       })
       await peerConnection.setRemoteDescription({type: "answer", sdp: answerSdp})
 
-      await waitForDataChannelOpen(eventChannel)
-
-      sendRealtimeEvent(eventChannel, {
-        type: "session.update",
-        session: {
-          audio: {
-            input: {
-              turn_detection: null,
-            },
-          },
-        },
-      })
-
       setTranscriptionState({
-        status: "queued",
-        message: "Live transcription ready. Recording will start chunking now.",
+        status: "streaming",
+        message: "Transcribing live audio...",
       })
       await render()
     } catch (error) {
@@ -1139,14 +1126,6 @@ const initRecordStudio = () => {
     }
 
     try {
-      if (state.transcriptionCommitIntervalRef) {
-        window.clearInterval(state.transcriptionCommitIntervalRef)
-        state.transcriptionCommitIntervalRef = null
-      }
-
-      await connection.commitTranscriptionChunk({force: true})
-      await wait(FINAL_TRANSCRIPTION_FLUSH_MS)
-
       await pushChannelEvent(connection.channel, "transcript.stop", {reason})
       setTranscriptionState({
         status: "completed",
@@ -1165,8 +1144,6 @@ const initRecordStudio = () => {
       }
       state.transcriptionCleanup = null
       state.transcriptionConnection = null
-      state.transcriptionPendingChunks = []
-      state.transcriptionPendingTimelineByItemId = {}
       await render()
     }
   }
@@ -1259,6 +1236,27 @@ const initRecordStudio = () => {
             preview: "",
             finalText: "",
           })
+          setTimelineTranscriptionState({
+            status: "skipped",
+            message: "Timeline transcription is unavailable because this clip has no audio.",
+            segments: [],
+          })
+        } else if (state.timelineGenerationEnabled) {
+          try {
+            await queueAccurateTimelineTranscription(clipRecord.id)
+          } catch (timelineError) {
+            setTimelineTranscriptionState({
+              status: "failed",
+              message: timelineError.message || "Could not queue timeline transcription.",
+              segments: [],
+            })
+          }
+        } else {
+          setTimelineTranscriptionState({
+            status: "idle",
+            message: "Timeline generation is off for this recording.",
+            segments: [],
+          })
         }
       } catch (error) {
         setIngestState({
@@ -1271,6 +1269,11 @@ const initRecordStudio = () => {
           message: null,
           preview: "",
           finalText: "",
+        })
+        setTimelineTranscriptionState({
+          status: "idle",
+          message: null,
+          segments: [],
         })
       }
     }
@@ -1378,16 +1381,25 @@ const initRecordStudio = () => {
     const ingestStatusMessage = state.errorMessage || state.ingestMessage
     const transcriptionStatusMessage = state.transcriptionMessage
     const transcriptPreviewText = state.transcriptionFinalText || state.transcriptionPreview
+    const timelineStatusMessage = state.timelineStatusMessage
     const hasTimelineSegments = state.transcriptionTimelineSegments.length > 0
     const hasFeedback = Boolean(
+      hasSource ||
       state.lastCapture ||
       ingestStatusMessage ||
       transcriptionStatusMessage ||
+      timelineStatusMessage ||
       transcriptPreviewText ||
       hasTimelineSegments
     )
     elements.captureFeedbackPanel?.classList.toggle("hidden", !hasFeedback)
     elements.captureFeedbackPanel?.classList.toggle("flex", hasFeedback)
+    elements.timelineGenerationToggle?.classList.toggle("hidden", false)
+    elements.timelineGenerationButton?.classList.toggle("btn-primary", state.timelineGenerationEnabled)
+    elements.timelineGenerationButton?.classList.toggle("btn-ghost", !state.timelineGenerationEnabled)
+    elements.timelineGenerationButton.textContent = state.timelineGenerationEnabled
+      ? "Timeline On"
+      : "Timeline Off"
 
     if (state.lastCapture) {
       const mb = (state.lastCapture.size / (1024 * 1024)).toFixed(2)
@@ -1410,7 +1422,15 @@ const initRecordStudio = () => {
     }
 
     if (transcriptionStatusMessage) {
-      elements.transcriptionStatusNote.textContent = transcriptionStatusMessage
+      const combinedMessage =
+        state.transcriptionDisplayMode === "timeline" && timelineStatusMessage
+          ? `${transcriptionStatusMessage} ${timelineStatusMessage}`
+          : transcriptionStatusMessage
+
+      elements.transcriptionStatusNote.textContent = combinedMessage
+      elements.transcriptionStatusNote.classList.remove("hidden")
+    } else if (timelineStatusMessage) {
+      elements.transcriptionStatusNote.textContent = timelineStatusMessage
       elements.transcriptionStatusNote.classList.remove("hidden")
     } else {
       elements.transcriptionStatusNote.textContent = ""
@@ -1455,10 +1475,15 @@ const initRecordStudio = () => {
       } else {
         const item = document.createElement("li")
         item.className = "rounded-md border border-dashed border-base-300 bg-base-100 px-3 py-2 text-xs text-base-content/65"
-        item.textContent =
-          state.transcriptionStatus === "streaming" || state.transcriptionStatus === "queued" || state.transcriptionStatus === "starting" || state.transcriptionStatus === "connecting"
-            ? "Timeline segments will appear as chunks complete."
-            : "No timeline segments yet."
+        if (!state.timelineGenerationEnabled) {
+          item.textContent = "Timeline generation is off for this recording."
+        } else if (state.status === "recording" || state.status === "paused") {
+          item.textContent = "Accurate timeline transcription is generated after recording finishes."
+        } else if (timelineStatusMessage) {
+          item.textContent = timelineStatusMessage
+        } else {
+          item.textContent = "No timeline segments yet."
+        }
         elements.transcriptionTimelineList.appendChild(item)
       }
       elements.transcriptionTimelinePanel.classList.remove("hidden")
@@ -1499,12 +1524,25 @@ const initRecordStudio = () => {
     await render()
   })
 
+  elements.timelineGenerationButton.addEventListener("click", async () => {
+    state.timelineGenerationEnabled = !state.timelineGenerationEnabled
+    await render()
+  })
+
   elements.start.addEventListener("click", async () => {
     if (!(state.status === "previewing" && state.previewStream)) return
 
     const clipId = Date.now()
     state.currentClipId = clipId
     state.transcriptionDisplayMode = "preview"
+    stopTimelinePolling()
+    setTimelineTranscriptionState({
+      status: state.timelineGenerationEnabled ? "idle" : "disabled",
+      message: state.timelineGenerationEnabled
+        ? "Timeline transcription will be queued after upload."
+        : "Timeline generation is off for this recording.",
+      segments: [],
+    })
     const recordingHasAudio = (state.previewStream?.getAudioTracks()?.length || 0) > 0
     setTranscriptionState({
       status: recordingHasAudio ? "queued" : "idle",
@@ -1545,35 +1583,12 @@ const initRecordStudio = () => {
     state.status = "recording"
     state.errorMessage = null
     state.recorder.start(1000)
-    if (state.transcriptionConnection?.eventChannel?.readyState === "open") {
-      sendRealtimeEvent(state.transcriptionConnection.eventChannel, {
-        type: "input_audio_buffer.clear",
-      })
-      state.transcriptionRecordingStartedAt = performance.now()
-      state.transcriptionChunkStartMs = 0
-      startTranscriptionChunkLoop()
-      setTranscriptionState({
-        status: "streaming",
-        message: "Transcribing live audio...",
-      })
-    }
     startTimer()
     await render()
   })
 
   elements.pause.addEventListener("click", async () => {
     if (state.status !== "recording" || !state.recorder) return
-    if (state.transcriptionConnection?.eventChannel?.readyState === "open") {
-      if (state.transcriptionCommitIntervalRef) {
-        window.clearInterval(state.transcriptionCommitIntervalRef)
-        state.transcriptionCommitIntervalRef = null
-      }
-      await state.transcriptionConnection.commitTranscriptionChunk({force: true})
-      sendRealtimeEvent(state.transcriptionConnection.eventChannel, {
-        type: "input_audio_buffer.clear",
-      })
-      state.transcriptionRecordingStartedAt = performance.now() - state.transcriptionChunkStartMs
-    }
     state.recorder.pause()
     state.status = "paused"
     stopTimer()
@@ -1582,13 +1597,6 @@ const initRecordStudio = () => {
 
   elements.resume.addEventListener("click", async () => {
     if (state.status !== "paused" || !state.recorder) return
-    if (state.transcriptionConnection?.eventChannel?.readyState === "open") {
-      sendRealtimeEvent(state.transcriptionConnection.eventChannel, {
-        type: "input_audio_buffer.clear",
-      })
-      state.transcriptionRecordingStartedAt = performance.now() - state.transcriptionChunkStartMs
-      startTranscriptionChunkLoop()
-    }
     state.recorder.resume()
     state.status = "recording"
     startTimer()
@@ -1613,6 +1621,7 @@ const initRecordStudio = () => {
 
   const cleanup = () => {
     stopTimer()
+    stopTimelinePolling()
     stopRecorderIfNeeded()
     stopPreviewStream()
     if (typeof state.transcriptionCleanup === "function") {

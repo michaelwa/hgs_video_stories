@@ -32,6 +32,83 @@ const SOURCE_DISPLAY_LABELS = {
   screen_only: "Screen / Application only",
 }
 
+const formatTimelineStatus = clip => {
+  if (!clip.server_url) return "Upload required"
+  if (!clip.had_audio) return "No audio"
+
+  switch (clip.timeline_status) {
+    case "completed":
+      return "Timeline ready"
+    case "pending":
+      return "Queued"
+    case "processing":
+      return "Processing"
+    case "failed":
+      return "Failed"
+    default:
+      return "Not generated"
+  }
+}
+
+const timelineButtonLabel = clip => {
+  if (!clip.server_url) return "Upload First"
+  if (!clip.had_audio) return "No Audio"
+  if (clip.timeline_status === "completed") return "Timeline Ready"
+  if (clip.timeline_status === "pending" || clip.timeline_status === "processing") {
+    return "Timeline Queued"
+  }
+  if (clip.timeline_status === "failed") return "Retry Timeline"
+  return "Generate Timeline"
+}
+
+const timelineButtonDisabled = clip => {
+  if (!clip.server_url) return true
+  if (!clip.had_audio) return true
+  return clip.timeline_status === "pending" || clip.timeline_status === "processing" || clip.timeline_status === "completed"
+}
+
+const fetchTimelineStatuses = async mediaIds => {
+  if (mediaIds.length === 0) return new Map()
+
+  const response = await fetch(`/api/media_clips/timeline_transcriptions?media_ids=${mediaIds.join(",")}`, {
+    headers: {
+      accept: "application/json",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error("Could not load timeline transcription statuses.")
+  }
+
+  const payload = await response.json()
+  const items = Array.isArray(payload?.items) ? payload.items : []
+  return new Map(items.map(item => [item.media_id, item]))
+}
+
+const queueTimelineTranscription = async mediaId => {
+  const response = await fetch(`/api/media_clips/${mediaId}/timeline_transcription`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  })
+
+  if (!response.ok) {
+    let reason = "Could not queue timeline transcription."
+    try {
+      const json = await response.json()
+      if (json?.error) reason = json.error
+    } catch (_error) {
+    }
+    throw new Error(reason)
+  }
+
+  const payload = await response.json()
+  return payload.timeline_transcription
+}
+
 const initMediaLibrary = () => {
   const page = document.getElementById("media-library-page")
   if (!page || page.dataset.initialized === "true") return
@@ -45,20 +122,34 @@ const initMediaLibrary = () => {
     previewVideo: document.getElementById("media-preview-video"),
     previewImage: document.getElementById("media-preview-image"),
     saveServer: document.getElementById("media-save-server"),
+    generateTimeline: document.getElementById("media-generate-timeline"),
     download: document.getElementById("media-download"),
     delete: document.getElementById("media-delete"),
     helper: document.getElementById("media-library-helper"),
+    timelineHelper: document.getElementById("media-timeline-helper"),
     serverLink: document.getElementById("media-server-link"),
     metaSource: document.getElementById("media-meta-source"),
     metaDuration: document.getElementById("media-meta-duration"),
     metaCreated: document.getElementById("media-meta-created"),
     metaSize: document.getElementById("media-meta-size"),
+    metaTimeline: document.getElementById("media-meta-timeline"),
   }
 
   const state = {
     clips: [],
     selectedId: null,
     previewUrl: null,
+    timelineStatuses: new Map(),
+  }
+
+  const decorateClip = clip => {
+    const timeline = state.timelineStatuses.get(clip.id)
+    return {
+      ...clip,
+      timeline_status: timeline?.status || null,
+      timeline_segment_count: timeline?.segment_count || 0,
+      timeline_error_message: timeline?.error_message || null,
+    }
   }
 
   const revokePreviewUrl = () => {
@@ -74,7 +165,9 @@ const initMediaLibrary = () => {
       elements.metaDuration.textContent = "-"
       elements.metaCreated.textContent = "-"
       elements.metaSize.textContent = "-"
+      elements.metaTimeline.textContent = "-"
       elements.saveServer.disabled = true
+      elements.generateTimeline.disabled = true
       elements.download.disabled = true
       elements.delete.disabled = true
       elements.serverLink.classList.add("hidden")
@@ -92,7 +185,10 @@ const initMediaLibrary = () => {
     elements.metaDuration.textContent = formatTimer(clip.duration_seconds || 0)
     elements.metaCreated.textContent = formatCreatedAt(clip.created_at)
     elements.metaSize.textContent = `${(clip.size_bytes / (1024 * 1024)).toFixed(2)} MB`
+    elements.metaTimeline.textContent = formatTimelineStatus(clip)
     elements.saveServer.disabled = false
+    elements.generateTimeline.disabled = timelineButtonDisabled(clip)
+    elements.generateTimeline.textContent = timelineButtonLabel(clip)
     elements.download.disabled = false
     elements.delete.disabled = false
 
@@ -111,6 +207,7 @@ const initMediaLibrary = () => {
       elements.download.disabled = true
       elements.delete.disabled = true
       elements.saveServer.disabled = true
+      elements.generateTimeline.disabled = true
       elements.helper.textContent = "This clip has metadata only and cannot be previewed or downloaded."
       revokePreviewUrl()
       elements.previewVideo.pause()
@@ -121,7 +218,20 @@ const initMediaLibrary = () => {
       return
     }
 
-    elements.helper.textContent = "Choose a clip to preview, download, or delete."
+    if (!clip.server_url) {
+      elements.helper.textContent = "Save this clip to the server before requesting a timeline transcription."
+    } else if (!clip.had_audio) {
+      elements.helper.textContent = "This clip has no audio track, so timeline transcription is unavailable."
+    } else if (clip.timeline_status === "completed") {
+      elements.helper.textContent = `Timeline transcription is ready (${clip.timeline_segment_count} segments).`
+    } else if (clip.timeline_status === "failed" && clip.timeline_error_message) {
+      elements.helper.textContent = `Timeline transcription failed: ${clip.timeline_error_message}`
+    } else if (clip.timeline_status === "pending" || clip.timeline_status === "processing") {
+      elements.helper.textContent = "Timeline transcription is queued on the server."
+    } else {
+      elements.helper.textContent = "Choose whether this clip is worth the extra timeline transcription cost."
+    }
+
     revokePreviewUrl()
     state.previewUrl = URL.createObjectURL(fullClip.blob)
     elements.previewImage.classList.add("hidden")
@@ -133,19 +243,38 @@ const initMediaLibrary = () => {
   const renderList = () => {
     elements.list.innerHTML = ""
 
-    state.clips.forEach(clip => {
+    state.clips.forEach(baseClip => {
+      const clip = decorateClip(baseClip)
       const item = document.createElement("li")
       const button = document.createElement("button")
       const selected = state.selectedId === clip.id
+      const tone = clip.timeline_status === "completed"
+        ? "border-emerald-300/70 bg-emerald-50"
+        : clip.timeline_status === "failed"
+          ? "border-rose-300/70 bg-rose-50"
+          : clip.timeline_status === "pending" || clip.timeline_status === "processing"
+            ? "border-amber-300/70 bg-amber-50"
+            : "border-base-300 bg-base-200/70"
+
       button.type = "button"
       button.className = selected
-        ? "w-full rounded-2xl border border-primary/40 bg-primary/10 p-3 text-left"
-        : "w-full rounded-2xl border border-base-300 bg-base-200/70 p-3 text-left"
-      button.innerHTML = `<p class=\"text-sm font-semibold\">${clip.title}</p><p class=\"text-xs text-base-content/65\">${formatTimer(clip.duration_seconds || 0)} · ${formatCreatedAt(clip.created_at)}</p>`
+        ? `w-full rounded-2xl border p-3 text-left ${tone} ring-1 ring-primary/30`
+        : `w-full rounded-2xl border p-3 text-left ${tone}`
+
+      button.innerHTML =
+        `<div class="flex items-start justify-between gap-3">` +
+        `<div>` +
+        `<p class="text-sm font-semibold">${clip.title}</p>` +
+        `<p class="text-xs text-base-content/65">${formatTimer(clip.duration_seconds || 0)} · ${formatCreatedAt(clip.created_at)}</p>` +
+        `</div>` +
+        `<span class="rounded-full border border-base-300 bg-base-100 px-2 py-1 text-[11px] font-medium text-base-content/70">${formatTimelineStatus(clip)}</span>` +
+        `</div>`
+
       button.addEventListener("click", () => {
         state.selectedId = clip.id
         render().catch(() => {})
       })
+
       item.appendChild(button)
       elements.list.appendChild(item)
     })
@@ -159,13 +288,16 @@ const initMediaLibrary = () => {
     if (!hasClips) return
 
     renderList()
-    const selected = state.clips.find(clip => clip.id === state.selectedId) || state.clips[0]
-    await renderMetadata(selected)
+    const selectedClip =
+      state.clips.find(clip => clip.id === state.selectedId) || state.clips[0]
+
+    await renderMetadata(selectedClip ? decorateClip(selectedClip) : null)
   }
 
   const syncState = async () => {
     state.clips = await listClipMetadata()
-    state.selectedId = state.clips[0]?.id ?? null
+    state.selectedId = state.selectedId || state.clips[0]?.id || null
+    state.timelineStatuses = await fetchTimelineStatuses(state.clips.map(clip => clip.id))
   }
 
   const downloadSelected = async () => {
@@ -231,6 +363,32 @@ const initMediaLibrary = () => {
     elements.helper.textContent = "Clip saved to server."
   }
 
+  const generateSelectedTimeline = async () => {
+    const selected = state.clips.find(clip => clip.id === state.selectedId)
+    if (!selected) return
+
+    const selectedClip = decorateClip(selected)
+    if (!selectedClip.server_url) {
+      elements.helper.textContent = "Save the clip to the server before requesting a timeline."
+      return
+    }
+
+    if (!selectedClip.had_audio) {
+      elements.helper.textContent = "This clip has no audio track."
+      return
+    }
+
+    elements.generateTimeline.disabled = true
+    elements.generateTimeline.textContent = "Queueing..."
+    elements.helper.textContent = "Queueing timeline transcription..."
+
+    await queueTimelineTranscription(selectedClip.id)
+    await syncState()
+    state.selectedId = selectedClip.id
+    await render()
+    elements.helper.textContent = "Timeline transcription queued."
+  }
+
   elements.download.addEventListener("click", () => {
     downloadSelected().catch(() => {})
   })
@@ -240,6 +398,12 @@ const initMediaLibrary = () => {
   elements.saveServer.addEventListener("click", () => {
     saveSelectedToServer().catch(() => {
       elements.helper.textContent = "Could not save clip to server."
+      render().catch(() => {})
+    })
+  })
+  elements.generateTimeline.addEventListener("click", () => {
+    generateSelectedTimeline().catch(error => {
+      elements.helper.textContent = error.message || "Could not queue timeline transcription."
       render().catch(() => {})
     })
   })
@@ -254,8 +418,8 @@ const initMediaLibrary = () => {
     .then(() => render())
     .catch(() => {
       elements.helper.textContent = "Could not load media library."
+      elements.timelineHelper.textContent = "Timeline transcription status is unavailable right now."
     })
 }
 
 document.addEventListener("DOMContentLoaded", initMediaLibrary)
-document.addEventListener("phx:page-loading-stop", initMediaLibrary)
