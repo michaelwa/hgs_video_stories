@@ -383,7 +383,7 @@ const initMediaLibrary = () => {
     elements.generateTimeline.disabled = timelineButtonDisabled(clip)
     elements.generateTimeline.textContent = timelineButtonLabel(clip)
     elements.viewTimeline.disabled = !clip.server_url || !clip.had_audio
-    elements.viewTimeline.textContent = state.timelinePanelOpen ? "Hide Timeline" : "View Timeline"
+    elements.viewTimeline.textContent = state.timelinePanelOpen ? "Hide Transcript" : "Show Transcript"
     elements.download.disabled = false
     elements.delete.disabled = false
 
