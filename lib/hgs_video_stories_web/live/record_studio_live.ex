@@ -225,6 +225,15 @@ defmodule HgsVideoStoriesWeb.RecordStudioLive do
                 >
                 </p>
                 <div
+                  id="timeline-status-panel"
+                  class="hidden w-full rounded-lg border border-base-300 bg-base-100 px-3 py-3"
+                >
+                  <p class="text-[11px] font-medium uppercase tracking-wide text-base-content/60">
+                    Timeline Status
+                  </p>
+                  <p id="timeline-status-text" class="mt-1 text-xs text-base-content/80"></p>
+                </div>
+                <div
                   id="transcription-display-toggle"
                   class="hidden rounded-full border border-base-300 bg-base-100 p-1"
                 >

@@ -236,6 +236,8 @@ export const initRecordStudio = rootElement => {
     timelineGenerationButton: document.getElementById("timeline-generation-button"),
     ingestStatusNote: document.getElementById("ingest-status-note"),
     transcriptionStatusNote: document.getElementById("transcription-status-note"),
+    timelineStatusPanel: document.getElementById("timeline-status-panel"),
+    timelineStatusText: document.getElementById("timeline-status-text"),
     transcriptionDisplayToggle: document.getElementById("transcription-display-toggle"),
     transcriptionModePreview: document.getElementById("transcription-mode-preview"),
     transcriptionModeTimeline: document.getElementById("transcription-mode-timeline"),
@@ -787,6 +789,21 @@ export const initRecordStudio = rootElement => {
     }
 
     stopPreviewStream()
+    stopTimelinePolling()
+    state.transcriptionDisplayMode = "preview"
+    setTranscriptionState({
+      status: "idle",
+      message: null,
+      preview: "",
+      finalText: "",
+    })
+    setTimelineTranscriptionState({
+      status: state.timelineGenerationEnabled ? "idle" : "disabled",
+      message: state.timelineGenerationEnabled
+        ? "Timeline status will appear here after recording starts."
+        : null,
+      segments: [],
+    })
     state.source = source
     elements.captureMode.value = source
     syncDeviceControlsForMode(source)
@@ -1464,6 +1481,16 @@ export const initRecordStudio = rootElement => {
     } else {
       elements.transcriptionStatusNote.textContent = ""
       elements.transcriptionStatusNote.classList.add("hidden")
+    }
+
+    const showTimelineStatus = Boolean(state.timelineGenerationEnabled || timelineStatusMessage)
+    elements.timelineStatusPanel?.classList.toggle("hidden", !showTimelineStatus)
+    if (showTimelineStatus) {
+      elements.timelineStatusText.textContent =
+        timelineStatusMessage ||
+        "Timeline status will appear here after recording starts."
+    } else {
+      elements.timelineStatusText.textContent = ""
     }
 
     const showToggle = Boolean(
