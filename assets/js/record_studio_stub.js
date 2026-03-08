@@ -1466,7 +1466,13 @@ export const initRecordStudio = rootElement => {
       elements.transcriptionStatusNote.classList.add("hidden")
     }
 
-    const showToggle = Boolean(transcriptPreviewText || hasTimelineSegments || state.transcriptionStatus !== "idle")
+    const showToggle = Boolean(
+      transcriptPreviewText ||
+        hasTimelineSegments ||
+        state.transcriptionStatus !== "idle" ||
+        state.timelineGenerationEnabled ||
+        timelineStatusMessage
+    )
     elements.transcriptionDisplayToggle.classList.toggle("hidden", !showToggle)
 
     elements.transcriptionModePreview.classList.toggle("btn-primary", state.transcriptionDisplayMode === "preview")

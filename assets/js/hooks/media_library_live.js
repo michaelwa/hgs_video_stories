@@ -1,4 +1,11 @@
-import {addClipToStore, getClipById, listClipMetadata, removeClipById, supportsPersistentClipStore} from "../media_clip_store"
+import {
+  addClipToStore,
+  getClipById,
+  listClipMetadata,
+  removeClipById,
+  subscribeToClipStoreChanges,
+  supportsPersistentClipStore,
+} from "../media_clip_store"
 import {uploadClipToServer} from "../media_clip_ingest"
 
 const MediaLibrary = {
@@ -6,6 +13,9 @@ const MediaLibrary = {
     this.previewUrl = null
     this.selectedPreviewId = null
     this.syncOnFocus = () => this.syncClips()
+    this.unsubscribeClipStore = subscribeToClipStoreChanges(() => {
+      this.syncClips()
+    })
 
     this.handleEvent("media-upload-request", payload => {
       this.uploadClip(payload?.clipId)
@@ -31,6 +41,10 @@ const MediaLibrary = {
   destroyed() {
     this.revokePreviewUrl()
     window.removeEventListener("focus", this.syncOnFocus)
+    if (typeof this.unsubscribeClipStore === "function") {
+      this.unsubscribeClipStore()
+      this.unsubscribeClipStore = null
+    }
   },
 
   async syncClips() {

@@ -2,8 +2,26 @@ const DB_NAME = "hgs_video_stories_media_db"
 const DB_VERSION = 1
 const STORE_NAME = "clips"
 const LEGACY_MEDIA_LIBRARY_KEY = "hgs_video_stories_media_clips"
+const CLIP_STORE_CHANNEL = "hgs_video_stories_clip_store"
 
 const hasIndexedDb = () => typeof window !== "undefined" && "indexedDB" in window
+
+const createClipStoreChannel = () => {
+  if (typeof window === "undefined" || !("BroadcastChannel" in window)) return null
+  return new BroadcastChannel(CLIP_STORE_CHANNEL)
+}
+
+const notifyClipStoreChange = detail => {
+  if (typeof window === "undefined") return
+
+  window.dispatchEvent(new CustomEvent(CLIP_STORE_CHANNEL, {detail}))
+
+  const channel = createClipStoreChannel()
+  if (!channel) return
+
+  channel.postMessage(detail)
+  channel.close()
+}
 
 const openDatabase = () =>
   new Promise((resolve, reject) => {
@@ -42,7 +60,10 @@ export const addClipToStore = async clipRecord => {
     const tx = db.transaction(STORE_NAME, "readwrite")
     const store = tx.objectStore(STORE_NAME)
     store.put(clipRecord)
-    tx.oncomplete = () => resolve(clipRecord)
+    tx.oncomplete = () => {
+      notifyClipStoreChange({type: "upsert", clipId: clipRecord.id})
+      resolve(clipRecord)
+    }
     tx.onerror = () => reject(tx.error || new Error("Failed to save clip."))
   })
 }
@@ -101,7 +122,36 @@ export const removeClipById = async id => {
     const tx = db.transaction(STORE_NAME, "readwrite")
     const store = tx.objectStore(STORE_NAME)
     store.delete(id)
-    tx.oncomplete = () => resolve(true)
+    tx.oncomplete = () => {
+      notifyClipStoreChange({type: "delete", clipId: id})
+      resolve(true)
+    }
     tx.onerror = () => reject(tx.error || new Error("Failed to delete clip."))
   })
+}
+
+export const subscribeToClipStoreChanges = callback => {
+  if (typeof window === "undefined") return () => {}
+
+  const handleWindowEvent = event => {
+    callback(event.detail || null)
+  }
+
+  window.addEventListener(CLIP_STORE_CHANNEL, handleWindowEvent)
+
+  const channel = createClipStoreChannel()
+  if (!channel) {
+    return () => {
+      window.removeEventListener(CLIP_STORE_CHANNEL, handleWindowEvent)
+    }
+  }
+
+  channel.addEventListener("message", event => {
+    callback(event.data || null)
+  })
+
+  return () => {
+    window.removeEventListener(CLIP_STORE_CHANNEL, handleWindowEvent)
+    channel.close()
+  }
 }
