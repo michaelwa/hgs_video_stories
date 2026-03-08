@@ -170,6 +170,8 @@ const initMediaLibrary = () => {
     download: document.getElementById("media-download"),
     delete: document.getElementById("media-delete"),
     helper: document.getElementById("media-library-helper"),
+    timelineErrorDetail: document.getElementById("media-timeline-error-detail"),
+    timelineErrorMessage: document.getElementById("media-timeline-error-message"),
     timelineHelper: document.getElementById("media-timeline-helper"),
     serverLink: document.getElementById("media-server-link"),
     metaSource: document.getElementById("media-meta-source"),
@@ -298,12 +300,35 @@ const initMediaLibrary = () => {
     }
 
     if (clip.timeline_status !== "completed") {
-      elements.timelineSummary.textContent = "Timeline segments will be available after processing completes."
+      elements.timelineSummary.textContent =
+        clip.timeline_status === "failed"
+          ? "The accurate timeline pass failed. Review the failure details and retry when ready."
+          : "Timeline segments will be available after processing completes."
       const item = document.createElement("li")
-      item.className = "rounded-xl border border-dashed border-base-300 bg-base-200/40 px-4 py-3 text-sm text-base-content/65"
-      item.textContent = clip.timeline_status === "failed"
-        ? clip.timeline_error_message || "Timeline generation failed."
-        : "No timeline is available for this clip yet."
+      item.className = clip.timeline_status === "failed"
+        ? "rounded-2xl border border-rose-300 bg-rose-50 px-4 py-4"
+        : "rounded-xl border border-dashed border-base-300 bg-base-200/40 px-4 py-3 text-sm text-base-content/65"
+
+      if (clip.timeline_status === "failed") {
+        const title = document.createElement("p")
+        title.className = "text-sm font-semibold text-rose-900"
+        title.textContent = "Timeline transcription failed"
+
+        const detail = document.createElement("p")
+        detail.className = "mt-2 text-sm leading-6 text-rose-800"
+        detail.textContent = clip.timeline_error_message || "The server could not finish the timeline transcription."
+
+        const hint = document.createElement("p")
+        hint.className = "mt-3 text-xs font-medium uppercase tracking-wide text-rose-700/80"
+        hint.textContent = "Use Retry Timeline above to queue another attempt."
+
+        item.appendChild(title)
+        item.appendChild(detail)
+        item.appendChild(hint)
+      } else {
+        item.textContent = "No timeline is available for this clip yet."
+      }
+
       elements.timelineSegments.appendChild(item)
       elements.timelinePanel.classList.remove("hidden")
       return
@@ -363,6 +388,8 @@ const initMediaLibrary = () => {
       elements.viewTimeline.disabled = true
       elements.download.disabled = true
       elements.delete.disabled = true
+      elements.timelineErrorDetail.classList.add("hidden")
+      elements.timelineErrorMessage.textContent = "-"
       elements.serverLink.classList.add("hidden")
       elements.serverLink.href = "#"
       elements.previewVideo.pause()
@@ -404,6 +431,8 @@ const initMediaLibrary = () => {
       elements.saveServer.disabled = true
       elements.generateTimeline.disabled = true
       elements.viewTimeline.disabled = true
+      elements.timelineErrorDetail.classList.add("hidden")
+      elements.timelineErrorMessage.textContent = "-"
       elements.helper.textContent = "This clip has metadata only and cannot be previewed or downloaded."
       revokePreviewUrl()
       elements.previewVideo.pause()
@@ -426,6 +455,15 @@ const initMediaLibrary = () => {
       elements.helper.textContent = "Timeline transcription is queued on the server."
     } else {
       elements.helper.textContent = "Choose whether this clip is worth the extra timeline transcription cost."
+    }
+
+    if (clip.timeline_status === "failed") {
+      elements.timelineErrorDetail.classList.remove("hidden")
+      elements.timelineErrorMessage.textContent =
+        clip.timeline_error_message || "The server could not finish the timeline transcription."
+    } else {
+      elements.timelineErrorDetail.classList.add("hidden")
+      elements.timelineErrorMessage.textContent = "-"
     }
 
     revokePreviewUrl()

@@ -82,6 +82,28 @@
             <p id="media-library-helper" class="mt-3 text-sm text-base-content/65">
               Choose a clip to preview, download, or delete.
             </p>
+            <div
+              id="media-timeline-error-detail"
+              class="mt-3 hidden rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3"
+            >
+              <div class="flex items-start gap-3">
+                <div class="mt-0.5 flex size-8 items-center justify-center rounded-full bg-rose-100">
+                  <.icon name="hero-exclamation-triangle" class="size-4 text-rose-700" />
+                </div>
+                <div class="min-w-0">
+                  <p class="text-sm font-semibold text-rose-900">Timeline transcription failed</p>
+                  <p
+                    id="media-timeline-error-message"
+                    class="mt-1 text-sm leading-6 text-rose-800"
+                  >
+                    -
+                  </p>
+                  <p class="mt-2 text-xs font-medium uppercase tracking-wide text-rose-700/80">
+                    Use Retry Timeline to queue a new run for this clip.
+                  </p>
+                </div>
+              </div>
+            </div>
             <a
               id="media-server-link"
               href="#"
