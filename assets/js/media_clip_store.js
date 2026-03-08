@@ -67,6 +67,7 @@ export const listClipMetadata = async () => {
         created_at: clip.created_at,
         size_bytes: clip.size_bytes,
         had_audio: clip.had_audio || false,
+        has_blob: Boolean(clip.blob),
         server_url: clip.server_url || null,
         server_saved_at: clip.server_saved_at || null,
         server_id: clip.server_id || null,
