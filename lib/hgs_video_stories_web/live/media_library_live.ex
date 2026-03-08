@@ -195,6 +195,18 @@ defmodule HgsVideoStoriesWeb.MediaLibraryLive do
                             >
                               {timeline_error_message(@selected_clip)}
                             </p>
+                            <div class="mt-3 flex flex-wrap gap-2 text-xs text-rose-900/80">
+                              <%= if @selected_clip.timeline_model do %>
+                                <span class="rounded-full border border-rose-200 bg-rose-100 px-2 py-1">
+                                  Model: {@selected_clip.timeline_model}
+                                </span>
+                              <% end %>
+                              <%= if last_attempted_at = timeline_last_attempted_at(@selected_clip) do %>
+                                <span class="rounded-full border border-rose-200 bg-rose-100 px-2 py-1">
+                                  Last attempted: {format_created_at(last_attempted_at)}
+                                </span>
+                              <% end %>
+                            </div>
                             <p class="mt-2 text-xs font-medium uppercase tracking-wide text-rose-700/80">
                               Use Retry Timeline to queue a new run for this clip.
                             </p>
@@ -626,7 +638,10 @@ defmodule HgsVideoStoriesWeb.MediaLibraryLive do
       timeline_status: nil,
       timeline_segment_count: 0,
       timeline_error_message: nil,
-      timeline_model: nil
+      timeline_model: nil,
+      timeline_requested_at: nil,
+      timeline_started_at: nil,
+      timeline_completed_at: nil
     })
   end
 
@@ -637,7 +652,10 @@ defmodule HgsVideoStoriesWeb.MediaLibraryLive do
         Map.get(summary, :segment_count) || Map.get(summary, "segment_count") || 0,
       timeline_error_message:
         Map.get(summary, :error_message) || Map.get(summary, "error_message"),
-      timeline_model: Map.get(summary, :model) || Map.get(summary, "model")
+      timeline_model: Map.get(summary, :model) || Map.get(summary, "model"),
+      timeline_requested_at: Map.get(summary, :requested_at) || Map.get(summary, "requested_at"),
+      timeline_started_at: Map.get(summary, :started_at) || Map.get(summary, "started_at"),
+      timeline_completed_at: Map.get(summary, :completed_at) || Map.get(summary, "completed_at")
     })
   end
 
@@ -657,7 +675,10 @@ defmodule HgsVideoStoriesWeb.MediaLibraryLive do
       timeline_status: nil,
       timeline_segment_count: 0,
       timeline_error_message: nil,
-      timeline_model: nil
+      timeline_model: nil,
+      timeline_requested_at: nil,
+      timeline_started_at: nil,
+      timeline_completed_at: nil
     }
   end
 
@@ -800,6 +821,10 @@ defmodule HgsVideoStoriesWeb.MediaLibraryLive do
 
   defp timeline_error_message(clip) do
     clip.timeline_error_message || "The server could not finish the timeline transcription."
+  end
+
+  defp timeline_last_attempted_at(clip) do
+    clip.timeline_completed_at || clip.timeline_started_at || clip.timeline_requested_at
   end
 
   defp clip_button_class(clip, selected?) do
