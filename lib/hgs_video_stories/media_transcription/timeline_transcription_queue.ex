@@ -3,6 +3,7 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueue do
 
   alias HgsVideoStories.MediaClips
   alias HgsVideoStories.MediaTranscription
+  alias HgsVideoStories.MediaTranscription.TimelineStatusNotifier
   alias HgsVideoStories.OpenAI.TimelineTranscriptionClient
 
   @callback queue(integer()) ::
@@ -13,10 +14,8 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueue do
     with {:ok, _path} <- locate_clip(media_id),
          {:ok, timeline_transcription} <-
            MediaTranscription.queue_timeline_transcription(media_id),
-         {:ok, _pid} <-
-           Task.Supervisor.start_child(HgsVideoStories.TaskSupervisor, fn ->
-             run(media_id)
-           end) do
+         {:ok, _pid} <- start_runner(media_id) do
+      TimelineStatusNotifier.broadcast_status(media_id)
       {:ok, timeline_transcription}
     else
       {:error, :not_found} ->
@@ -36,6 +35,7 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueue do
     with {:ok, clip_path} <- locate_clip(media_id),
          {:ok, _timeline_transcription} <-
            MediaTranscription.mark_timeline_transcription_processing(media_id),
+         _ = TimelineStatusNotifier.broadcast_status(media_id),
          {:ok, transcription_session} <- MediaTranscription.create_session(%{media_id: media_id}),
          {:ok, response} <- timeline_client().transcribe_file(clip_path),
          :ok <-
@@ -55,6 +55,8 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueue do
            MediaTranscription.stop_session(transcription_session, :completed),
          {:ok, _timeline_transcription} <-
            MediaTranscription.mark_timeline_transcription_completed(media_id, response.model) do
+      TimelineStatusNotifier.broadcast_status(media_id)
+
       :telemetry.execute(
         [:hgs_video_stories, :timeline_transcription, :completed],
         %{count: 1},
@@ -95,6 +97,7 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueue do
     end
 
     MediaTranscription.mark_timeline_transcription_failed(media_id, message)
+    TimelineStatusNotifier.broadcast_status(media_id)
   end
 
   defp locate_clip(media_id) do
@@ -110,5 +113,20 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueue do
       :openai_timeline_client,
       TimelineTranscriptionClient
     )
+  end
+
+  defp start_runner(media_id) do
+    runner =
+      Application.get_env(
+        :hgs_video_stories,
+        :timeline_transcription_runner,
+        fn queued_media_id ->
+          Task.Supervisor.start_child(HgsVideoStories.TaskSupervisor, fn ->
+            run(queued_media_id)
+          end)
+        end
+      )
+
+    runner.(media_id)
   end
 end

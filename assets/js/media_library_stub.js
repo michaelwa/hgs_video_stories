@@ -6,6 +6,7 @@ import {
   supportsPersistentClipStore,
 } from "./media_clip_store"
 import {uploadClipToServer} from "./media_clip_ingest"
+import {Socket as PhoenixSocket} from "phoenix"
 
 const formatTimer = totalSeconds => {
   const minutes = Math.floor(totalSeconds / 60)
@@ -31,8 +32,6 @@ const SOURCE_DISPLAY_LABELS = {
   screen: "Screen / Application + Audio",
   screen_only: "Screen / Application only",
 }
-const TIMELINE_STATUS_POLL_MS = 3000
-
 const formatTimelineStatus = clip => {
   if (!clip.server_url) return "Upload required"
   if (!clip.had_audio) return "No audio"
@@ -110,6 +109,25 @@ const queueTimelineTranscription = async mediaId => {
   return payload.timeline_transcription
 }
 
+const connectMediaTimelineChannel = () =>
+  new Promise((resolve, reject) => {
+    const socket = new PhoenixSocket("/socket")
+    socket.connect()
+
+    const channel = socket.channel("media_timeline", {})
+
+    channel.join()
+      .receive("ok", () => resolve({socket, channel}))
+      .receive("error", payload => {
+        socket.disconnect()
+        reject(new Error(payload?.reason || "Could not join media timeline channel."))
+      })
+      .receive("timeout", () => {
+        socket.disconnect()
+        reject(new Error("Timed out joining media timeline channel."))
+      })
+  })
+
 const initMediaLibrary = () => {
   const page = document.getElementById("media-library-page")
   if (!page || page.dataset.initialized === "true") return
@@ -142,7 +160,7 @@ const initMediaLibrary = () => {
     selectedId: null,
     previewUrl: null,
     timelineStatuses: new Map(),
-    timelinePollRef: null,
+    channelConnection: null,
   }
 
   const decorateClip = clip => {
@@ -161,41 +179,14 @@ const initMediaLibrary = () => {
     state.previewUrl = null
   }
 
-  const stopTimelinePolling = () => {
-    if (state.timelinePollRef) {
-      window.clearInterval(state.timelinePollRef)
-      state.timelinePollRef = null
-    }
-  }
-
-  const hasPendingTimelineWork = () =>
-    state.clips.some(clip => {
-      const status = state.timelineStatuses.get(clip.id)?.status
-      return status === "pending" || status === "processing"
-    })
-
   const refreshTimelineStatuses = async () => {
     state.timelineStatuses = await fetchTimelineStatuses(state.clips.map(clip => clip.id))
   }
 
-  const ensureTimelinePolling = () => {
-    if (!hasPendingTimelineWork()) {
-      stopTimelinePolling()
-      return
-    }
+  const applyTimelineStatusUpdate = payload => {
+    if (!payload || typeof payload.media_id !== "number") return
 
-    if (state.timelinePollRef) return
-
-    state.timelinePollRef = window.setInterval(() => {
-      refreshTimelineStatuses()
-        .then(() => render())
-        .then(() => {
-          if (!hasPendingTimelineWork()) {
-            stopTimelinePolling()
-          }
-        })
-        .catch(() => {})
-    }, TIMELINE_STATUS_POLL_MS)
+    state.timelineStatuses.set(payload.media_id, payload)
   }
 
   const renderMetadata = async clip => {
@@ -345,7 +336,6 @@ const initMediaLibrary = () => {
     state.clips = await listClipMetadata()
     state.selectedId = state.selectedId || state.clips[0]?.id || null
     await refreshTimelineStatuses()
-    ensureTimelinePolling()
   }
 
   const downloadSelected = async () => {
@@ -431,11 +421,24 @@ const initMediaLibrary = () => {
     elements.helper.textContent = "Queueing timeline transcription..."
 
     await queueTimelineTranscription(selectedClip.id)
-    await syncState()
-    state.selectedId = selectedClip.id
+    applyTimelineStatusUpdate({
+      media_id: selectedClip.id,
+      status: "pending",
+      timeline_available: false,
+      segment_count: 0,
+      error_message: null,
+      model: "whisper-1",
+    })
     await render()
-    ensureTimelinePolling()
     elements.helper.textContent = "Timeline transcription queued."
+  }
+
+  const cleanupChannel = () => {
+    const connection = state.channelConnection
+    if (!connection) return
+    connection.channel.leave()
+    connection.socket.disconnect()
+    state.channelConnection = null
   }
 
   elements.download.addEventListener("click", () => {
@@ -458,14 +461,23 @@ const initMediaLibrary = () => {
   })
 
   window.addEventListener("beforeunload", revokePreviewUrl)
-  window.addEventListener("beforeunload", stopTimelinePolling)
+  window.addEventListener("beforeunload", cleanupChannel)
 
   if (!supportsPersistentClipStore()) {
     elements.helper.textContent = "This browser does not support persistent clip storage."
   }
 
-  syncState()
-    .then(() => render())
+  Promise.all([syncState(), connectMediaTimelineChannel()])
+    .then(async ([, connection]) => {
+      state.channelConnection = connection
+
+      connection.channel.on("timeline.status_updated", payload => {
+        applyTimelineStatusUpdate(payload)
+        render().catch(() => {})
+      })
+
+      await render()
+    })
     .catch(() => {
       elements.helper.textContent = "Could not load media library."
       elements.timelineHelper.textContent = "Timeline transcription status is unavailable right now."

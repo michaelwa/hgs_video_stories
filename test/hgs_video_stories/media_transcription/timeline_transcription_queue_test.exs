@@ -3,6 +3,7 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueueTest do
 
   alias HgsVideoStories.MediaClips
   alias HgsVideoStories.MediaTranscription
+  alias HgsVideoStories.MediaTranscription.TimelineStatusNotifier
   alias HgsVideoStories.MediaTranscription.TimelineTranscriptionQueue
 
   defmodule TimelineClientMock do
@@ -29,12 +30,17 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueueTest do
     Application.put_env(:hgs_video_stories, :media_clip_storage_dir, storage_dir)
     Application.put_env(:hgs_video_stories, :openai_timeline_client, TimelineClientMock)
 
+    Application.put_env(:hgs_video_stories, :timeline_transcription_runner, fn _media_id ->
+      {:ok, self()}
+    end)
+
     File.mkdir_p!(storage_dir)
     File.write!(Path.join(storage_dir, "123-demo.webm"), "fake-webm-data")
 
     on_exit(fn ->
       Application.delete_env(:hgs_video_stories, :media_clip_storage_dir)
       Application.delete_env(:hgs_video_stories, :openai_timeline_client)
+      Application.delete_env(:hgs_video_stories, :timeline_transcription_runner)
       File.rm_rf(storage_dir)
     end)
 
@@ -56,5 +62,18 @@ defmodule HgsVideoStories.MediaTranscription.TimelineTranscriptionQueueTest do
     assert length(segments) == 2
     assert Enum.at(segments, 0).start_ms == 0
     assert Enum.at(segments, 1).end_ms == 3600
+  end
+
+  test "queue/1 broadcasts pending status update" do
+    media_id = 123
+    Phoenix.PubSub.subscribe(HgsVideoStories.PubSub, TimelineStatusNotifier.topic())
+
+    assert {:ok, _timeline} = TimelineTranscriptionQueue.queue(media_id)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "media_timeline",
+      event: "timeline.status_updated",
+      payload: %{media_id: 123, status: :pending}
+    }
   end
 end

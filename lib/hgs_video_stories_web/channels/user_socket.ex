@@ -1,6 +1,7 @@
 defmodule HgsVideoStoriesWeb.UserSocket do
   use Phoenix.Socket
 
+  channel "media_timeline", HgsVideoStoriesWeb.MediaTimelineChannel
   channel "transcripts:*", HgsVideoStoriesWeb.TranscriptChannel
 
   @impl true
