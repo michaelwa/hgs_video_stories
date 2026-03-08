@@ -56,6 +56,8 @@ defmodule HgsVideoStories.MediaTranscription do
 
   def upsert_completed_segment(attrs) do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    display_mode = Map.get(attrs, :display_mode) || Map.get(attrs, "display_mode") || :preview
+    attrs = attrs |> Map.new() |> Map.put(:display_mode, display_mode)
 
     %TranscriptionSegment{}
     |> TranscriptionSegment.changeset(attrs)
@@ -63,11 +65,13 @@ defmodule HgsVideoStories.MediaTranscription do
       on_conflict: [
         set: [
           text: Map.get(attrs, :text) || Map.get(attrs, "text"),
+          start_ms: Map.get(attrs, :start_ms) || Map.get(attrs, "start_ms"),
+          end_ms: Map.get(attrs, :end_ms) || Map.get(attrs, "end_ms"),
           source_ts: Map.get(attrs, :source_ts) || Map.get(attrs, "source_ts"),
           updated_at: now
         ]
       ],
-      conflict_target: [:transcription_session_id, :item_id, :seq]
+      conflict_target: [:transcription_session_id, :item_id, :seq, :display_mode]
     )
   end
 
@@ -77,12 +81,23 @@ defmodule HgsVideoStories.MediaTranscription do
     |> Repo.insert()
   end
 
-  def list_segments_for_media(media_id) when is_integer(media_id) do
-    from(segment in TranscriptionSegment,
-      where: segment.media_id == ^media_id,
-      order_by: [asc: segment.inserted_at, asc: segment.seq]
-    )
-    |> Repo.all()
+  def list_segments_for_media(media_id, opts \\ []) when is_integer(media_id) do
+    display_mode = Keyword.get(opts, :display_mode)
+
+    query =
+      from(segment in TranscriptionSegment,
+        where: segment.media_id == ^media_id,
+        order_by: [asc: segment.inserted_at, asc: segment.seq]
+      )
+
+    query =
+      if is_nil(display_mode) do
+        query
+      else
+        from(segment in query, where: segment.display_mode == ^display_mode)
+      end
+
+    Repo.all(query)
   end
 
   def list_event_logs_for_session(transcription_session_id)

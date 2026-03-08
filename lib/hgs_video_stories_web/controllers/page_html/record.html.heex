@@ -188,6 +188,27 @@
           >
           </p>
           <div
+            id="transcription-display-toggle"
+            class="hidden rounded-full border border-base-300 bg-base-100 p-1"
+          >
+            <div class="grid grid-cols-2 gap-1">
+              <button
+                id="transcription-mode-preview"
+                type="button"
+                class="btn btn-xs rounded-full btn-primary"
+              >
+                Transcription Preview
+              </button>
+              <button
+                id="transcription-mode-timeline"
+                type="button"
+                class="btn btn-xs rounded-full btn-ghost"
+              >
+                Transcription Timeline
+              </button>
+            </div>
+          </div>
+          <div
             id="transcription-preview-panel"
             class="hidden w-full rounded-lg border border-base-300 bg-base-200/60 px-3 py-2"
           >
@@ -195,6 +216,19 @@
               Transcript Preview
             </p>
             <p id="transcription-preview-text" class="mt-1 text-xs text-base-content/80"></p>
+          </div>
+          <div
+            id="transcription-timeline-panel"
+            class="hidden w-full rounded-lg border border-base-300 bg-base-200/60 px-3 py-2"
+          >
+            <p class="text-[11px] font-medium uppercase tracking-wide text-base-content/60">
+              Transcript Timeline
+            </p>
+            <ul
+              id="transcription-timeline-list"
+              class="mt-2 space-y-2 text-xs text-base-content/80"
+            >
+            </ul>
           </div>
         </div>
         <span id="record-control-timer" class="hidden">00:00</span>

@@ -28,6 +28,8 @@ const MICROPHONE_MODES = new Set(["camera", "screen", "mic_only"])
 const MIC_ONLY_MODES = new Set(["mic_only"])
 const DEFAULT_STAGE_FRAME_CLASSES = ["h-52", "sm:h-80", "lg:h-[26rem]"]
 const AUDIO_STAGE_FRAME_CLASSES = ["h-36", "sm:h-48", "lg:h-56"]
+const TRANSCRIPTION_CHUNK_MS = 1500
+const FINAL_TRANSCRIPTION_FLUSH_MS = 1200
 
 const modeUsesCamera = mode => CAMERA_MODES.has(mode)
 const modeUsesMicrophone = mode => MICROPHONE_MODES.has(mode)
@@ -36,6 +38,14 @@ const formatTimer = totalSeconds => {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+}
+
+const formatTimelineMs = totalMs => {
+  const safeMs = Math.max(0, totalMs)
+  const minutes = Math.floor(safeMs / 60_000)
+  const seconds = Math.floor((safeMs % 60_000) / 1000)
+  const milliseconds = safeMs % 1000
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`
 }
 
 const findSupportedMimeType = () => {
@@ -75,6 +85,38 @@ const pushChannelEvent = (channel, event, payload) =>
       .receive("ok", response => resolve(response))
       .receive("error", response => reject(new Error(response?.error || "Channel event failed.")))
       .receive("timeout", () => reject(new Error("Channel event timed out.")))
+  })
+
+const waitForDataChannelOpen = eventChannel =>
+  new Promise((resolve, reject) => {
+    if (eventChannel.readyState === "open") {
+      resolve()
+      return
+    }
+
+    const handleOpen = () => {
+      eventChannel.removeEventListener("open", handleOpen)
+      eventChannel.removeEventListener("close", handleClose)
+      resolve()
+    }
+
+    const handleClose = () => {
+      eventChannel.removeEventListener("open", handleOpen)
+      eventChannel.removeEventListener("close", handleClose)
+      reject(new Error("Realtime event channel closed before opening."))
+    }
+
+    eventChannel.addEventListener("open", handleOpen)
+    eventChannel.addEventListener("close", handleClose)
+  })
+
+const sendRealtimeEvent = (eventChannel, payload) => {
+  eventChannel.send(JSON.stringify(payload))
+}
+
+const wait = milliseconds =>
+  new Promise(resolve => {
+    window.setTimeout(resolve, milliseconds)
   })
 
 const negotiateRealtimeSdp = async ({offerSdp, ephemeralKey, model}) => {
@@ -134,8 +176,13 @@ const initRecordStudio = () => {
     lastDownload: document.getElementById("last-download"),
     ingestStatusNote: document.getElementById("ingest-status-note"),
     transcriptionStatusNote: document.getElementById("transcription-status-note"),
+    transcriptionDisplayToggle: document.getElementById("transcription-display-toggle"),
+    transcriptionModePreview: document.getElementById("transcription-mode-preview"),
+    transcriptionModeTimeline: document.getElementById("transcription-mode-timeline"),
     transcriptionPreviewPanel: document.getElementById("transcription-preview-panel"),
     transcriptionPreviewText: document.getElementById("transcription-preview-text"),
+    transcriptionTimelinePanel: document.getElementById("transcription-timeline-panel"),
+    transcriptionTimelineList: document.getElementById("transcription-timeline-list"),
   }
 
   if (!elements.stateBadge) return
@@ -162,10 +209,17 @@ const initRecordStudio = () => {
     ingestServerUrl: null,
     transcriptionStatus: "idle",
     transcriptionMessage: null,
+    transcriptionDisplayMode: "preview",
     transcriptionPreview: "",
     transcriptionFinalText: "",
+    transcriptionTimelineSegments: [],
     transcriptionCleanup: null,
     transcriptionConnection: null,
+    transcriptionRecordingStartedAt: null,
+    transcriptionChunkStartMs: 0,
+    transcriptionPendingChunks: [],
+    transcriptionPendingTimelineByItemId: {},
+    transcriptionCommitIntervalRef: null,
     audioContext: null,
     audioWaveRef: null,
     audioSourceNode: null,
@@ -736,6 +790,49 @@ const initRecordStudio = () => {
     }
   }
 
+  const resetTranscriptionBuffers = () => {
+    state.transcriptionPreview = ""
+    state.transcriptionFinalText = ""
+    state.transcriptionTimelineSegments = []
+    state.transcriptionPendingChunks = []
+    state.transcriptionPendingTimelineByItemId = {}
+    state.transcriptionChunkStartMs = 0
+    state.transcriptionRecordingStartedAt = null
+  }
+
+  const appendTimelineSegment = segment => {
+    const existingIndex = state.transcriptionTimelineSegments.findIndex(
+      existing =>
+        existing.itemId === segment.itemId &&
+        existing.seq === segment.seq
+    )
+
+    if (existingIndex >= 0) {
+      state.transcriptionTimelineSegments.splice(existingIndex, 1, segment)
+      return
+    }
+
+    state.transcriptionTimelineSegments.push(segment)
+    state.transcriptionTimelineSegments.sort((left, right) => left.startMs - right.startMs || left.seq - right.seq)
+  }
+
+  const startTranscriptionChunkLoop = () => {
+    if (!state.transcriptionConnection) return
+
+    if (state.transcriptionCommitIntervalRef) {
+      window.clearInterval(state.transcriptionCommitIntervalRef)
+    }
+
+    state.transcriptionCommitIntervalRef = window.setInterval(() => {
+      if (state.status !== "recording" || state.transcriptionRecordingStartedAt === null) return
+
+      const elapsedMs = Math.round(performance.now() - state.transcriptionRecordingStartedAt)
+      if (elapsedMs - state.transcriptionChunkStartMs >= TRANSCRIPTION_CHUNK_MS) {
+        void state.transcriptionConnection.commitTranscriptionChunk()
+      }
+    }, 250)
+  }
+
   const readTranscriptText = event => {
     if (typeof event?.transcript === "string" && event.transcript !== "") return event.transcript
     if (typeof event?.text === "string" && event.text !== "") return event.text
@@ -770,11 +867,10 @@ const initRecordStudio = () => {
       return
     }
 
+    resetTranscriptionBuffers()
     setTranscriptionState({
       status: "starting",
       message: "Starting live transcription...",
-      preview: "",
-      finalText: "",
     })
     await render()
 
@@ -782,8 +878,14 @@ const initRecordStudio = () => {
     let channel = null
     let peerConnection = null
     let eventChannel = null
+    let completedCount = 0
 
     const cleanup = () => {
+      if (state.transcriptionCommitIntervalRef) {
+        window.clearInterval(state.transcriptionCommitIntervalRef)
+        state.transcriptionCommitIntervalRef = null
+      }
+
       if (eventChannel) {
         eventChannel.close()
         eventChannel = null
@@ -806,6 +908,31 @@ const initRecordStudio = () => {
     }
 
     state.transcriptionCleanup = cleanup
+
+    const commitTranscriptionChunk = async ({force = false} = {}) => {
+      if (!eventChannel || eventChannel.readyState !== "open" || state.transcriptionRecordingStartedAt === null) {
+        return
+      }
+
+      const elapsedMs = Math.max(0, Math.round(performance.now() - state.transcriptionRecordingStartedAt))
+      const nextEndMs = force ? elapsedMs : elapsedMs - (elapsedMs % 1)
+      const startMs = state.transcriptionChunkStartMs
+
+      if (nextEndMs <= startMs) {
+        return
+      }
+
+      state.transcriptionPendingChunks.push({
+        startMs,
+        endMs: nextEndMs,
+      })
+
+      sendRealtimeEvent(eventChannel, {
+        type: "input_audio_buffer.commit",
+      })
+
+      state.transcriptionChunkStartMs = nextEndMs
+    }
 
     try {
       const sessionResponse = await fetch("/api/realtime/sessions", {
@@ -854,10 +981,9 @@ const initRecordStudio = () => {
       state.transcriptionConnection = {
         channel,
         transcriptionSessionId,
+        eventChannel,
+        commitTranscriptionChunk,
       }
-
-      let completedCount = 0
-      let livePreview = ""
 
       eventChannel.addEventListener("message", eventMessage => {
         try {
@@ -873,14 +999,21 @@ const initRecordStudio = () => {
             }).catch(() => {})
           }
 
+          if (eventData?.type === "input_audio_buffer.committed" && eventData?.item_id) {
+            const chunkWindow = state.transcriptionPendingChunks.shift()
+            if (chunkWindow) {
+              state.transcriptionPendingTimelineByItemId[eventData.item_id] = chunkWindow
+            }
+          }
+
           if (eventData?.type === "conversation.item.input_audio_transcription.delta") {
             const deltaText = readTranscriptText(eventData)
             if (deltaText) {
-              livePreview = `${livePreview}${deltaText}`.slice(-2400)
+              const nextPreview = `${state.transcriptionPreview}${deltaText}`.slice(-2400)
               setTranscriptionState({
                 status: "streaming",
                 message: "Transcribing live audio...",
-                preview: livePreview,
+                preview: nextPreview,
               })
               void render()
             }
@@ -891,10 +1024,38 @@ const initRecordStudio = () => {
             if (!completedText) return
 
             completedCount += 1
-            livePreview = ""
             const nextFinalText = state.transcriptionFinalText
               ? `${state.transcriptionFinalText}\n${completedText}`
               : completedText
+            const itemId = eventData?.item_id || eventData?.item?.id || `item-${completedCount}`
+            const chunkWindow = state.transcriptionPendingTimelineByItemId[itemId]
+
+            if (chunkWindow) {
+              delete state.transcriptionPendingTimelineByItemId[itemId]
+
+              const timelineSegment = {
+                itemId,
+                seq: completedCount,
+                startMs: chunkWindow.startMs,
+                endMs: chunkWindow.endMs,
+                text: completedText,
+              }
+
+              appendTimelineSegment(timelineSegment)
+
+              if (channel) {
+                void pushChannelEvent(channel, "transcript.timeline_completed", {
+                  transcription_session_id: transcriptionSessionId,
+                  media_id: mediaId,
+                  item_id: timelineSegment.itemId,
+                  seq: timelineSegment.seq,
+                  text: timelineSegment.text,
+                  start_ms: timelineSegment.startMs,
+                  end_ms: timelineSegment.endMs,
+                  source_ts: new Date().toISOString(),
+                }).catch(() => {})
+              }
+            }
 
             setTranscriptionState({
               status: "streaming",
@@ -908,7 +1069,7 @@ const initRecordStudio = () => {
               void pushChannelEvent(channel, "transcript.completed", {
                 transcription_session_id: transcriptionSessionId,
                 media_id: mediaId,
-                item_id: eventData?.item_id || eventData?.item?.id || `item-${completedCount}`,
+                item_id: itemId,
                 seq: completedCount,
                 text: completedText,
                 source_ts: new Date().toISOString(),
@@ -933,9 +1094,22 @@ const initRecordStudio = () => {
       })
       await peerConnection.setRemoteDescription({type: "answer", sdp: answerSdp})
 
+      await waitForDataChannelOpen(eventChannel)
+
+      sendRealtimeEvent(eventChannel, {
+        type: "session.update",
+        session: {
+          audio: {
+            input: {
+              turn_detection: null,
+            },
+          },
+        },
+      })
+
       setTranscriptionState({
-        status: "streaming",
-        message: "Transcribing live audio...",
+        status: "queued",
+        message: "Live transcription ready. Recording will start chunking now.",
       })
       await render()
     } catch (error) {
@@ -965,6 +1139,14 @@ const initRecordStudio = () => {
     }
 
     try {
+      if (state.transcriptionCommitIntervalRef) {
+        window.clearInterval(state.transcriptionCommitIntervalRef)
+        state.transcriptionCommitIntervalRef = null
+      }
+
+      await connection.commitTranscriptionChunk({force: true})
+      await wait(FINAL_TRANSCRIPTION_FLUSH_MS)
+
       await pushChannelEvent(connection.channel, "transcript.stop", {reason})
       setTranscriptionState({
         status: "completed",
@@ -983,6 +1165,8 @@ const initRecordStudio = () => {
       }
       state.transcriptionCleanup = null
       state.transcriptionConnection = null
+      state.transcriptionPendingChunks = []
+      state.transcriptionPendingTimelineByItemId = {}
       await render()
     }
   }
@@ -1194,7 +1378,14 @@ const initRecordStudio = () => {
     const ingestStatusMessage = state.errorMessage || state.ingestMessage
     const transcriptionStatusMessage = state.transcriptionMessage
     const transcriptPreviewText = state.transcriptionFinalText || state.transcriptionPreview
-    const hasFeedback = Boolean(state.lastCapture || ingestStatusMessage || transcriptionStatusMessage || transcriptPreviewText)
+    const hasTimelineSegments = state.transcriptionTimelineSegments.length > 0
+    const hasFeedback = Boolean(
+      state.lastCapture ||
+      ingestStatusMessage ||
+      transcriptionStatusMessage ||
+      transcriptPreviewText ||
+      hasTimelineSegments
+    )
     elements.captureFeedbackPanel?.classList.toggle("hidden", !hasFeedback)
     elements.captureFeedbackPanel?.classList.toggle("flex", hasFeedback)
 
@@ -1226,12 +1417,53 @@ const initRecordStudio = () => {
       elements.transcriptionStatusNote.classList.add("hidden")
     }
 
-    if (transcriptPreviewText) {
+    const showToggle = Boolean(transcriptPreviewText || hasTimelineSegments || state.transcriptionStatus !== "idle")
+    elements.transcriptionDisplayToggle.classList.toggle("hidden", !showToggle)
+
+    elements.transcriptionModePreview.classList.toggle("btn-primary", state.transcriptionDisplayMode === "preview")
+    elements.transcriptionModePreview.classList.toggle("btn-ghost", state.transcriptionDisplayMode !== "preview")
+    elements.transcriptionModeTimeline.classList.toggle("btn-primary", state.transcriptionDisplayMode === "timeline")
+    elements.transcriptionModeTimeline.classList.toggle("btn-ghost", state.transcriptionDisplayMode !== "timeline")
+
+    if (transcriptPreviewText && state.transcriptionDisplayMode === "preview") {
       elements.transcriptionPreviewText.textContent = transcriptPreviewText
       elements.transcriptionPreviewPanel.classList.remove("hidden")
     } else {
       elements.transcriptionPreviewText.textContent = ""
       elements.transcriptionPreviewPanel.classList.add("hidden")
+    }
+
+    elements.transcriptionTimelineList.replaceChildren()
+    if (state.transcriptionDisplayMode === "timeline") {
+      if (state.transcriptionTimelineSegments.length > 0) {
+        state.transcriptionTimelineSegments.forEach(segment => {
+          const item = document.createElement("li")
+          item.className = "rounded-md border border-base-300 bg-base-100 px-3 py-2"
+
+          const timestamp = document.createElement("p")
+          timestamp.className = "text-[11px] font-medium uppercase tracking-wide text-base-content/55"
+          timestamp.textContent = `${formatTimelineMs(segment.startMs)} - ${formatTimelineMs(segment.endMs)}`
+
+          const text = document.createElement("p")
+          text.className = "mt-1 text-xs text-base-content/85"
+          text.textContent = segment.text
+
+          item.appendChild(timestamp)
+          item.appendChild(text)
+          elements.transcriptionTimelineList.appendChild(item)
+        })
+      } else {
+        const item = document.createElement("li")
+        item.className = "rounded-md border border-dashed border-base-300 bg-base-100 px-3 py-2 text-xs text-base-content/65"
+        item.textContent =
+          state.transcriptionStatus === "streaming" || state.transcriptionStatus === "queued" || state.transcriptionStatus === "starting" || state.transcriptionStatus === "connecting"
+            ? "Timeline segments will appear as chunks complete."
+            : "No timeline segments yet."
+        elements.transcriptionTimelineList.appendChild(item)
+      }
+      elements.transcriptionTimelinePanel.classList.remove("hidden")
+    } else {
+      elements.transcriptionTimelinePanel.classList.add("hidden")
     }
 
   }
@@ -1257,11 +1489,22 @@ const initRecordStudio = () => {
     }
   })
 
+  elements.transcriptionModePreview.addEventListener("click", async () => {
+    state.transcriptionDisplayMode = "preview"
+    await render()
+  })
+
+  elements.transcriptionModeTimeline.addEventListener("click", async () => {
+    state.transcriptionDisplayMode = "timeline"
+    await render()
+  })
+
   elements.start.addEventListener("click", async () => {
     if (!(state.status === "previewing" && state.previewStream)) return
 
     const clipId = Date.now()
     state.currentClipId = clipId
+    state.transcriptionDisplayMode = "preview"
     const recordingHasAudio = (state.previewStream?.getAudioTracks()?.length || 0) > 0
     setTranscriptionState({
       status: recordingHasAudio ? "queued" : "idle",
@@ -1302,12 +1545,35 @@ const initRecordStudio = () => {
     state.status = "recording"
     state.errorMessage = null
     state.recorder.start(1000)
+    if (state.transcriptionConnection?.eventChannel?.readyState === "open") {
+      sendRealtimeEvent(state.transcriptionConnection.eventChannel, {
+        type: "input_audio_buffer.clear",
+      })
+      state.transcriptionRecordingStartedAt = performance.now()
+      state.transcriptionChunkStartMs = 0
+      startTranscriptionChunkLoop()
+      setTranscriptionState({
+        status: "streaming",
+        message: "Transcribing live audio...",
+      })
+    }
     startTimer()
     await render()
   })
 
   elements.pause.addEventListener("click", async () => {
     if (state.status !== "recording" || !state.recorder) return
+    if (state.transcriptionConnection?.eventChannel?.readyState === "open") {
+      if (state.transcriptionCommitIntervalRef) {
+        window.clearInterval(state.transcriptionCommitIntervalRef)
+        state.transcriptionCommitIntervalRef = null
+      }
+      await state.transcriptionConnection.commitTranscriptionChunk({force: true})
+      sendRealtimeEvent(state.transcriptionConnection.eventChannel, {
+        type: "input_audio_buffer.clear",
+      })
+      state.transcriptionRecordingStartedAt = performance.now() - state.transcriptionChunkStartMs
+    }
     state.recorder.pause()
     state.status = "paused"
     stopTimer()
@@ -1316,6 +1582,13 @@ const initRecordStudio = () => {
 
   elements.resume.addEventListener("click", async () => {
     if (state.status !== "paused" || !state.recorder) return
+    if (state.transcriptionConnection?.eventChannel?.readyState === "open") {
+      sendRealtimeEvent(state.transcriptionConnection.eventChannel, {
+        type: "input_audio_buffer.clear",
+      })
+      state.transcriptionRecordingStartedAt = performance.now() - state.transcriptionChunkStartMs
+      startTranscriptionChunkLoop()
+    }
     state.recorder.resume()
     state.status = "recording"
     startTimer()

@@ -63,6 +63,39 @@ defmodule HgsVideoStoriesWeb.TranscriptChannelTest do
     segments = MediaTranscription.list_segments_for_media(media_id)
     assert length(segments) == 1
     assert hd(segments).text == "hello world"
+    assert hd(segments).display_mode == :preview
+  end
+
+  test "transcript.timeline_completed stores approximate timing segment" do
+    media_id = System.unique_integer([:positive])
+    assert {:ok, session} = MediaTranscription.get_or_start_active_session(media_id)
+
+    assert {:ok, _reply, socket} =
+             subscribe_and_join(
+               socket(UserSocket, "socket-id", %{}),
+               TranscriptChannel,
+               "transcripts:#{media_id}",
+               %{"transcription_session_id" => session.id}
+             )
+
+    ref =
+      push(socket, "transcript.timeline_completed", %{
+        "media_id" => media_id,
+        "item_id" => "item-2",
+        "seq" => 2,
+        "text" => "timeline chunk",
+        "start_ms" => 1500,
+        "end_ms" => 3000
+      })
+
+    assert_reply ref, :ok, %{status: "ok"}
+
+    timeline_segments =
+      MediaTranscription.list_segments_for_media(media_id, display_mode: :timeline)
+
+    assert length(timeline_segments) == 1
+    assert hd(timeline_segments).start_ms == 1500
+    assert hd(timeline_segments).end_ms == 3000
   end
 
   test "transcript.audit stores audit payload" do

@@ -50,6 +50,33 @@ defmodule HgsVideoStories.MediaTranscriptionTest do
 
     assert length(segments) == 1
     assert hd(segments).text == "hello world"
+    assert hd(segments).display_mode == :preview
+  end
+
+  test "upsert_completed_segment stores timeline mode timing fields" do
+    media_id = System.unique_integer([:positive])
+
+    assert {:ok, session} = MediaTranscription.get_or_start_active_session(media_id)
+
+    assert {:ok, _segment} =
+             MediaTranscription.upsert_completed_segment(%{
+               transcription_session_id: session.id,
+               media_id: media_id,
+               item_id: "item-2",
+               seq: 2,
+               text: "timeline chunk",
+               display_mode: :timeline,
+               start_ms: 1500,
+               end_ms: 3000
+             })
+
+    timeline_segments =
+      MediaTranscription.list_segments_for_media(media_id, display_mode: :timeline)
+
+    assert length(timeline_segments) == 1
+    assert hd(timeline_segments).start_ms == 1500
+    assert hd(timeline_segments).end_ms == 3000
+    assert hd(timeline_segments).display_mode == :timeline
   end
 
   test "insert_event_log stores audit payload" do

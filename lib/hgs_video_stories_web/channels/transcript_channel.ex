@@ -38,6 +38,7 @@ defmodule HgsVideoStoriesWeb.TranscriptChannel do
              item_id: item_id,
              seq: seq,
              text: text,
+             display_mode: :preview,
              source_ts: source_ts
            }) do
       :telemetry.execute(
@@ -54,6 +55,56 @@ defmodule HgsVideoStoriesWeb.TranscriptChannel do
       {:error, reason} ->
         :telemetry.execute(
           [:hgs_video_stories, :transcription, :segment, :upsert_failed],
+          %{count: 1},
+          %{media_id: socket.assigns.media_id, error: reason}
+        )
+
+        {:reply, {:error, %{error: reason}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("transcript.timeline_completed", payload, socket) do
+    with :ok <- ensure_payload_media_matches(payload, socket.assigns.media_id),
+         {:ok, item_id} <- require_non_empty_string(payload["item_id"], "item_id is required"),
+         {:ok, seq} <- parse_positive_integer(payload["seq"], "seq must be a positive integer"),
+         {:ok, text} <- require_non_empty_string(payload["text"], "text is required"),
+         {:ok, start_ms} <-
+           parse_non_negative_integer(
+             payload["start_ms"],
+             "start_ms must be a non-negative integer"
+           ),
+         {:ok, end_ms} <-
+           parse_non_negative_integer(payload["end_ms"], "end_ms must be a non-negative integer"),
+         :ok <- ensure_timing_window(start_ms, end_ms),
+         {:ok, source_ts} <- parse_optional_datetime(payload["source_ts"]),
+         {:ok, _session} <- ensure_active_session(socket.assigns.transcription_session_id),
+         {:ok, _segment} <-
+           MediaTranscription.upsert_completed_segment(%{
+             transcription_session_id: socket.assigns.transcription_session_id,
+             media_id: socket.assigns.media_id,
+             item_id: item_id,
+             seq: seq,
+             text: text,
+             display_mode: :timeline,
+             start_ms: start_ms,
+             end_ms: end_ms,
+             source_ts: source_ts
+           }) do
+      :telemetry.execute(
+        [:hgs_video_stories, :transcription, :timeline_segment, :upserted],
+        %{count: 1},
+        %{
+          media_id: socket.assigns.media_id,
+          transcription_session_id: socket.assigns.transcription_session_id
+        }
+      )
+
+      {:reply, {:ok, %{status: "ok"}}, socket}
+    else
+      {:error, reason} ->
+        :telemetry.execute(
+          [:hgs_video_stories, :transcription, :timeline_segment, :upsert_failed],
           %{count: 1},
           %{media_id: socket.assigns.media_id, error: reason}
         )
@@ -184,6 +235,18 @@ defmodule HgsVideoStoriesWeb.TranscriptChannel do
 
   defp parse_positive_integer(_value, message), do: {:error, message}
 
+  defp parse_non_negative_integer(value, _message) when is_integer(value) and value >= 0,
+    do: {:ok, value}
+
+  defp parse_non_negative_integer(value, message) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed >= 0 -> {:ok, parsed}
+      _ -> {:error, message}
+    end
+  end
+
+  defp parse_non_negative_integer(_value, message), do: {:error, message}
+
   defp require_non_empty_string(value, _message) when is_binary(value) and value != "",
     do: {:ok, value}
 
@@ -208,6 +271,11 @@ defmodule HgsVideoStoriesWeb.TranscriptChannel do
 
   defp parse_required_map(value, _message) when is_map(value), do: {:ok, value}
   defp parse_required_map(_value, message), do: {:error, message}
+
+  defp ensure_timing_window(start_ms, end_ms) when end_ms >= start_ms, do: :ok
+
+  defp ensure_timing_window(_start_ms, _end_ms),
+    do: {:error, "end_ms must be greater than or equal to start_ms"}
 
   defp parse_stop_status(reason) when reason in [nil, "", "user_stopped"], do: {:ok, :stopped}
   defp parse_stop_status("completed"), do: {:ok, :completed}
