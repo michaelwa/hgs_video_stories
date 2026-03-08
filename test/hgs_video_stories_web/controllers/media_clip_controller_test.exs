@@ -25,6 +25,7 @@ defmodule HgsVideoStoriesWeb.MediaClipControllerTest do
     }
 
     params = %{
+      "id" => "1234567890",
       "clip" => upload,
       "title" => "My Test Capture",
       "source" => "camera",
@@ -42,7 +43,7 @@ defmodule HgsVideoStoriesWeb.MediaClipControllerTest do
     assert response["source"] == "camera"
     assert response["duration_seconds"] == 12
     assert response["size_bytes"] > 0
-    assert is_integer(response["id"])
+    assert response["id"] == 1_234_567_890
     assert response["media_id"] == response["id"]
     assert response["had_audio"] == true
     assert is_binary(response["saved_at"])
@@ -81,6 +82,7 @@ defmodule HgsVideoStoriesWeb.MediaClipControllerTest do
       conn
       |> post(~p"/api/media_clips", %{
         "clip" => upload,
+        "id" => "7654321",
         "title" => "No Audio Flag Capture",
         "source" => "camera",
         "duration_seconds" => "12",
@@ -90,5 +92,6 @@ defmodule HgsVideoStoriesWeb.MediaClipControllerTest do
 
     assert response["had_audio"] == false
     assert response["media_id"] == response["id"]
+    assert response["id"] == 7_654_321
   end
 end

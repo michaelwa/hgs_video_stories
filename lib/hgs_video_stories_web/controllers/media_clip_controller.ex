@@ -31,7 +31,7 @@ defmodule HgsVideoStoriesWeb.MediaClipController do
   defp valid_video_upload?(_upload), do: false
 
   defp copy_to_storage(upload, params) do
-    clip_id = System.system_time(:millisecond)
+    clip_id = parse_clip_id(params["id"]) || System.system_time(:millisecond)
     extension = upload.filename |> Path.extname() |> normalize_extension(upload.content_type)
     safe_title = sanitize_title(params["title"])
     stored_filename = "#{clip_id}-#{safe_title}#{extension}"
@@ -99,4 +99,15 @@ defmodule HgsVideoStoriesWeb.MediaClipController do
 
   defp parse_boolean(value) when value in [true, "true", "1", 1], do: true
   defp parse_boolean(_value), do: false
+
+  defp parse_clip_id(value) when is_integer(value) and value > 0, do: value
+
+  defp parse_clip_id(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, _rest} when parsed > 0 -> parsed
+      _ -> nil
+    end
+  end
+
+  defp parse_clip_id(_value), do: nil
 end

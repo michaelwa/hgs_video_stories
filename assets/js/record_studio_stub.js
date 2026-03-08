@@ -156,6 +156,7 @@ const initRecordStudio = () => {
     chunks: [],
     errorMessage: null,
     lastCapture: null,
+    currentClipId: null,
     ingestStatus: "idle",
     ingestMessage: null,
     ingestServerUrl: null,
@@ -164,6 +165,7 @@ const initRecordStudio = () => {
     transcriptionPreview: "",
     transcriptionFinalText: "",
     transcriptionCleanup: null,
+    transcriptionConnection: null,
     audioContext: null,
     audioWaveRef: null,
     audioSourceNode: null,
@@ -490,6 +492,7 @@ const initRecordStudio = () => {
     stopRecorderIfNeeded()
     stopPreviewStream()
     state.source = null
+    state.currentClipId = null
     state.status = "idle"
     state.seconds = 0
     state.errorMessage = null
@@ -747,15 +750,29 @@ const initRecordStudio = () => {
     return ""
   }
 
-  const runTranscriptionForClip = async ({blob, mediaId}) => {
+  const startLiveTranscription = async ({stream, mediaId}) => {
     if (typeof state.transcriptionCleanup === "function") {
       state.transcriptionCleanup()
       state.transcriptionCleanup = null
     }
 
+    state.transcriptionConnection = null
+
+    const audioTracks = stream?.getAudioTracks?.() || []
+    if (audioTracks.length === 0) {
+      setTranscriptionState({
+        status: "skipped",
+        message: "Capture has no audio track. Transcription skipped.",
+        preview: "",
+        finalText: "",
+      })
+      await render()
+      return
+    }
+
     setTranscriptionState({
       status: "starting",
-      message: "Starting transcription session...",
+      message: "Starting live transcription...",
       preview: "",
       finalText: "",
     })
@@ -765,27 +782,8 @@ const initRecordStudio = () => {
     let channel = null
     let peerConnection = null
     let eventChannel = null
-    let audioElement = null
-    let audioUrl = null
-    let audioContext = null
 
     const cleanup = () => {
-      if (audioElement) {
-        audioElement.pause()
-        audioElement.src = ""
-        audioElement = null
-      }
-
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl)
-        audioUrl = null
-      }
-
-      if (audioContext) {
-        audioContext.close().catch(() => {})
-        audioContext = null
-      }
-
       if (eventChannel) {
         eventChannel.close()
         eventChannel = null
@@ -853,6 +851,10 @@ const initRecordStudio = () => {
 
       peerConnection = new RTCPeerConnection()
       eventChannel = peerConnection.createDataChannel("oai-events")
+      state.transcriptionConnection = {
+        channel,
+        transcriptionSessionId,
+      }
 
       let completedCount = 0
       let livePreview = ""
@@ -877,7 +879,7 @@ const initRecordStudio = () => {
               livePreview = `${livePreview}${deltaText}`.slice(-2400)
               setTranscriptionState({
                 status: "streaming",
-                message: "Transcribing captured audio...",
+                message: "Transcribing live audio...",
                 preview: livePreview,
               })
               void render()
@@ -896,7 +898,7 @@ const initRecordStudio = () => {
 
             setTranscriptionState({
               status: "streaming",
-              message: "Transcribing captured audio...",
+              message: "Transcribing live audio...",
               preview: "",
               finalText: nextFinalText,
             })
@@ -917,66 +919,9 @@ const initRecordStudio = () => {
         }
       })
 
-      audioElement = document.createElement("audio")
-      audioElement.muted = true
-      audioElement.preload = "auto"
-      audioUrl = URL.createObjectURL(blob)
-      audioElement.src = audioUrl
-
-      await new Promise((resolve, reject) => {
-        const handleLoaded = () => {
-          audioElement.removeEventListener("loadedmetadata", handleLoaded)
-          audioElement.removeEventListener("error", handleError)
-          resolve()
-        }
-
-        const handleError = () => {
-          audioElement.removeEventListener("loadedmetadata", handleLoaded)
-          audioElement.removeEventListener("error", handleError)
-          reject(new Error("Recorded clip metadata could not be loaded."))
-        }
-
-        audioElement.addEventListener("loadedmetadata", handleLoaded)
-        audioElement.addEventListener("error", handleError)
-      })
-
-      await audioElement.play()
-
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      let outboundStream =
-        typeof audioElement.captureStream === "function"
-          ? audioElement.captureStream()
-          : typeof audioElement.mozCaptureStream === "function"
-            ? audioElement.mozCaptureStream()
-            : null
-
-      if (!outboundStream || outboundStream.getAudioTracks().length === 0) {
-        if (!window.AudioContext) {
-          throw new Error("Browser does not support audio capture stream for transcription.")
-        }
-
-        audioContext = new AudioContext()
-        if (audioContext.state === "suspended") {
-          await audioContext.resume()
-        }
-
-        const sourceNode = audioContext.createMediaElementSource(audioElement)
-        const destinationNode = audioContext.createMediaStreamDestination()
-        sourceNode.connect(destinationNode)
-        outboundStream = destinationNode.stream
+      for (const audioTrack of audioTracks) {
+        peerConnection.addTrack(audioTrack, stream)
       }
-
-      if (!outboundStream) {
-        throw new Error("Browser does not support audio capture stream for transcription.")
-      }
-
-      const [audioTrack] = outboundStream.getAudioTracks()
-      if (!audioTrack) {
-        throw new Error("Recorded clip did not include a playable audio track.")
-      }
-
-      peerConnection.addTrack(audioTrack, outboundStream)
 
       const offer = await peerConnection.createOffer()
       await peerConnection.setLocalDescription(offer)
@@ -990,36 +935,7 @@ const initRecordStudio = () => {
 
       setTranscriptionState({
         status: "streaming",
-        message: "Transcribing captured audio...",
-      })
-      await render()
-
-      await new Promise((resolve, reject) => {
-        const handleEnded = () => {
-          audioElement.removeEventListener("ended", handleEnded)
-          audioElement.removeEventListener("error", handleError)
-          resolve()
-        }
-
-        const handleError = () => {
-          audioElement.removeEventListener("ended", handleEnded)
-          audioElement.removeEventListener("error", handleError)
-          reject(new Error("Recorded clip playback failed during transcription."))
-        }
-
-        audioElement.addEventListener("ended", handleEnded)
-        audioElement.addEventListener("error", handleError)
-      })
-
-      if (channel) {
-        await pushChannelEvent(channel, "transcript.stop", {reason: "completed"})
-      }
-
-      setTranscriptionState({
-        status: "completed",
-        message: state.transcriptionFinalText
-          ? "Transcription completed and saved."
-          : "Transcription completed with no text detected.",
+        message: "Transcribing live audio...",
       })
       await render()
     } catch (error) {
@@ -1029,17 +945,56 @@ const initRecordStudio = () => {
       })
       await render()
     } finally {
-      cleanup()
+      if (state.transcriptionStatus === "failed") {
+        cleanup()
+        state.transcriptionCleanup = null
+        state.transcriptionConnection = null
+      }
+    }
+  }
+
+  const stopLiveTranscription = async reason => {
+    const connection = state.transcriptionConnection
+
+    if (!connection) {
+      if (typeof state.transcriptionCleanup === "function") {
+        state.transcriptionCleanup()
+        state.transcriptionCleanup = null
+      }
+      return
+    }
+
+    try {
+      await pushChannelEvent(connection.channel, "transcript.stop", {reason})
+      setTranscriptionState({
+        status: "completed",
+        message: state.transcriptionFinalText
+          ? "Live transcription completed and saved."
+          : "Live transcription completed with no text detected.",
+      })
+    } catch (error) {
+      setTranscriptionState({
+        status: "failed",
+        message: `Transcription finalization failed (${error.message || "unknown error"}).`,
+      })
+    } finally {
+      if (typeof state.transcriptionCleanup === "function") {
+        state.transcriptionCleanup()
+      }
       state.transcriptionCleanup = null
+      state.transcriptionConnection = null
+      await render()
     }
   }
 
   const handleRecordingStop = async () => {
+    await stopLiveTranscription("completed")
+
     const blob = new Blob(state.chunks, {type: state.recorder?.mimeType || "video/webm"})
     state.chunks = []
 
     if (blob.size > 0) {
-      const clipId = Date.now()
+      const clipId = state.currentClipId || Date.now()
       if (state.lastCapture?.url) {
         URL.revokeObjectURL(state.lastCapture.url)
       }
@@ -1113,18 +1068,7 @@ const initRecordStudio = () => {
           serverUrl: ingestResult.url,
         })
 
-        if (clipRecord.had_audio) {
-          const rawMediaId = ingestResult.media_id ?? ingestResult.id
-          const mediaId = Number.parseInt(rawMediaId, 10)
-          if (Number.isInteger(mediaId) && mediaId > 0) {
-            void runTranscriptionForClip({blob, mediaId})
-          } else {
-            setTranscriptionState({
-              status: "failed",
-              message: "Transcription could not start because media_id was missing.",
-            })
-          }
-        } else {
+        if (!clipRecord.had_audio) {
           setTranscriptionState({
             status: "skipped",
             message: "Clip saved without audio. Transcription skipped.",
@@ -1316,13 +1260,29 @@ const initRecordStudio = () => {
   elements.start.addEventListener("click", async () => {
     if (!(state.status === "previewing" && state.previewStream)) return
 
+    const clipId = Date.now()
+    state.currentClipId = clipId
     const recordingHasAudio = (state.previewStream?.getAudioTracks()?.length || 0) > 0
     setTranscriptionState({
       status: recordingHasAudio ? "queued" : "idle",
-      message: recordingHasAudio ? "Transcription will begin after recording is uploaded." : null,
+      message: recordingHasAudio ? "Connecting live transcription..." : null,
       preview: "",
       finalText: "",
     })
+    setIngestState({
+      status: "idle",
+      message: null,
+      serverUrl: null,
+    })
+    state.errorMessage = null
+    await render()
+
+    if (recordingHasAudio) {
+      await startLiveTranscription({
+        stream: state.previewStream,
+        mediaId: clipId,
+      })
+    }
 
     const mimeType = findSupportedMimeType()
     state.chunks = []

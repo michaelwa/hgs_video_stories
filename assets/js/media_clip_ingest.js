@@ -5,6 +5,7 @@ export const uploadClipToServer = async ({blob, id, title, source, durationSecon
 
   const formData = new FormData()
   formData.append("clip", uploadFile)
+  formData.append("id", String(id))
   formData.append("title", title)
   formData.append("source", source)
   formData.append("duration_seconds", String(durationSeconds || 0))
