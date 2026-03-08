@@ -28,8 +28,6 @@ const MICROPHONE_MODES = new Set(["camera", "screen", "mic_only"])
 const MIC_ONLY_MODES = new Set(["mic_only"])
 const DEFAULT_STAGE_FRAME_CLASSES = ["h-52", "sm:h-80", "lg:h-[26rem]"]
 const AUDIO_STAGE_FRAME_CLASSES = ["h-36", "sm:h-48", "lg:h-56"]
-const TIMELINE_POLL_INTERVAL_MS = 3000
-
 const modeUsesCamera = mode => CAMERA_MODES.has(mode)
 const modeUsesMicrophone = mode => MICROPHONE_MODES.has(mode)
 
@@ -75,6 +73,25 @@ const connectTranscriptChannel = ({mediaId, transcriptionSessionId}) =>
       .receive("timeout", () => {
         socket.disconnect()
         reject(new Error("Timed out joining transcript channel."))
+      })
+  })
+
+const connectMediaTimelineChannel = () =>
+  new Promise((resolve, reject) => {
+    const socket = new PhoenixSocket("/socket")
+    socket.connect()
+
+    const channel = socket.channel("media_timeline", {})
+
+    channel.join()
+      .receive("ok", () => resolve({socket, channel}))
+      .receive("error", payload => {
+        socket.disconnect()
+        reject(new Error(payload?.reason || "Could not join media timeline channel."))
+      })
+      .receive("timeout", () => {
+        socket.disconnect()
+        reject(new Error("Timed out joining media timeline channel."))
       })
   })
 
@@ -276,11 +293,11 @@ export const initRecordStudio = rootElement => {
     transcriptionFinalText: "",
     transcriptionTimelineSegments: [],
     timelineGenerationEnabled: false,
-    timelinePollRef: null,
     timelineStatus: "idle",
     timelineStatusMessage: null,
     transcriptionCleanup: null,
     transcriptionConnection: null,
+    mediaTimelineConnection: null,
     audioContext: null,
     audioWaveRef: null,
     audioSourceNode: null,
@@ -602,12 +619,14 @@ export const initRecordStudio = rootElement => {
     state.recorder = null
   }
 
-  const resetToIdle = async () => {
+  const resetToIdle = async ({preserveCurrentClipId = false} = {}) => {
     stopTimer()
     stopRecorderIfNeeded()
     stopPreviewStream()
     state.source = null
-    state.currentClipId = null
+    if (!preserveCurrentClipId) {
+      state.currentClipId = null
+    }
     state.status = "idle"
     state.seconds = 0
     state.errorMessage = null
@@ -789,7 +808,6 @@ export const initRecordStudio = rootElement => {
     }
 
     stopPreviewStream()
-    stopTimelinePolling()
     state.transcriptionDisplayMode = "preview"
     setTranscriptionState({
       status: "idle",
@@ -875,13 +893,6 @@ export const initRecordStudio = rootElement => {
     }
   }
 
-  const stopTimelinePolling = () => {
-    if (state.timelinePollRef) {
-      window.clearInterval(state.timelinePollRef)
-      state.timelinePollRef = null
-    }
-  }
-
   const syncTimelineTranscription = async mediaId => {
     const payload = await loadTimelineTranscription(mediaId)
     const timeline = payload?.timeline_transcription || {}
@@ -904,17 +915,6 @@ export const initRecordStudio = rootElement => {
         text: segment.text || "",
       })),
     })
-
-    if (status === "completed" || status === "failed" || status === "missing") {
-      stopTimelinePolling()
-    }
-  }
-
-  const startTimelinePolling = mediaId => {
-    stopTimelinePolling()
-    state.timelinePollRef = window.setInterval(() => {
-      void syncTimelineTranscription(mediaId).then(() => render()).catch(() => {})
-    }, TIMELINE_POLL_INTERVAL_MS)
   }
 
   const queueAccurateTimelineTranscription = async mediaId => {
@@ -935,10 +935,40 @@ export const initRecordStudio = rootElement => {
 
     await syncTimelineTranscription(mediaId)
     await render()
+  }
 
-    if (state.timelineStatus === "pending" || state.timelineStatus === "processing") {
-      startTimelinePolling(mediaId)
-    }
+  const connectRecordTimelineStatus = async () => {
+    if (state.mediaTimelineConnection) return state.mediaTimelineConnection
+
+    const connection = await connectMediaTimelineChannel()
+
+    connection.channel.on("timeline.status_updated", payload => {
+      if (Number(payload?.media_id) !== Number(state.currentClipId)) return
+
+      const status = payload?.status || "missing"
+      const message = describeTimelineStatus({
+        status,
+        errorMessage: payload?.error_message || null,
+        segmentCount: payload?.segment_count || 0,
+      })
+
+      setTimelineTranscriptionState({
+        status,
+        message,
+        segments: status === "completed" ? null : [],
+      })
+
+      if (status === "completed") {
+        void syncTimelineTranscription(payload.media_id)
+          .then(() => render())
+          .catch(() => {})
+      } else {
+        void render()
+      }
+    })
+
+    state.mediaTimelineConnection = connection
+    return connection
   }
 
   const readTranscriptText = event => {
@@ -1324,7 +1354,7 @@ export const initRecordStudio = rootElement => {
       }
     }
 
-    await resetToIdle()
+    await resetToIdle({preserveCurrentClipId: state.timelineGenerationEnabled && blob.size > 0})
   }
 
   const render = async () => {
@@ -1683,7 +1713,6 @@ export const initRecordStudio = rootElement => {
 
   const cleanup = () => {
     stopTimer()
-    stopTimelinePolling()
     stopRecorderIfNeeded()
     stopPreviewStream()
     if (typeof state.transcriptionCleanup === "function") {
@@ -1696,6 +1725,13 @@ export const initRecordStudio = rootElement => {
     if (navigator.mediaDevices?.removeEventListener) {
       navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange)
     }
+
+    if (state.mediaTimelineConnection) {
+      state.mediaTimelineConnection.channel.leave()
+      state.mediaTimelineConnection.socket.disconnect()
+      state.mediaTimelineConnection = null
+    }
+
     window.removeEventListener("beforeunload", handleBeforeUnload)
     page.dataset.initialized = "false"
   }
@@ -1716,6 +1752,7 @@ export const initRecordStudio = rootElement => {
   window.addEventListener("beforeunload", handleBeforeUnload)
 
   void refreshDeviceOptions()
+  void connectRecordTimelineStatus().catch(() => {})
   render()
 
   return cleanup
