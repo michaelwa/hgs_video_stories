@@ -25,6 +25,14 @@ const formatCreatedAt = iso => {
   })
 }
 
+const formatTimelineMs = totalMs => {
+  const safeMs = Math.max(0, totalMs || 0)
+  const minutes = Math.floor(safeMs / 60_000)
+  const seconds = Math.floor((safeMs % 60_000) / 1000)
+  const milliseconds = safeMs % 1000
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`
+}
+
 const SOURCE_DISPLAY_LABELS = {
   camera: "Camera + Microphone",
   camera_only: "Camera only",
@@ -109,6 +117,21 @@ const queueTimelineTranscription = async mediaId => {
   return payload.timeline_transcription
 }
 
+const fetchTimelineDetail = async mediaId => {
+  const response = await fetch(`/api/media_clips/${mediaId}/timeline_transcription`, {
+    headers: {
+      accept: "application/json",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error("Could not load timeline segments.")
+  }
+
+  return response.json()
+}
+
 const connectMediaTimelineChannel = () =>
   new Promise((resolve, reject) => {
     const socket = new PhoenixSocket("/socket")
@@ -143,6 +166,7 @@ const initMediaLibrary = () => {
     previewImage: document.getElementById("media-preview-image"),
     saveServer: document.getElementById("media-save-server"),
     generateTimeline: document.getElementById("media-generate-timeline"),
+    viewTimeline: document.getElementById("media-view-timeline"),
     download: document.getElementById("media-download"),
     delete: document.getElementById("media-delete"),
     helper: document.getElementById("media-library-helper"),
@@ -153,6 +177,9 @@ const initMediaLibrary = () => {
     metaCreated: document.getElementById("media-meta-created"),
     metaSize: document.getElementById("media-meta-size"),
     metaTimeline: document.getElementById("media-meta-timeline"),
+    timelinePanel: document.getElementById("media-timeline-panel"),
+    timelineSummary: document.getElementById("media-timeline-summary"),
+    timelineSegments: document.getElementById("media-timeline-segments"),
   }
 
   const state = {
@@ -160,7 +187,9 @@ const initMediaLibrary = () => {
     selectedId: null,
     previewUrl: null,
     timelineStatuses: new Map(),
+    timelineDetails: new Map(),
     channelConnection: null,
+    timelinePanelOpen: false,
   }
 
   const decorateClip = clip => {
@@ -187,6 +216,85 @@ const initMediaLibrary = () => {
     if (!payload || typeof payload.media_id !== "number") return
 
     state.timelineStatuses.set(payload.media_id, payload)
+
+    if (payload.status !== "completed") {
+      state.timelineDetails.delete(payload.media_id)
+    }
+  }
+
+  const ensureTimelineDetailLoaded = async clip => {
+    if (!clip || clip.timeline_status !== "completed") return null
+
+    const cached = state.timelineDetails.get(clip.id)
+    if (cached) return cached
+
+    const detail = await fetchTimelineDetail(clip.id)
+    state.timelineDetails.set(clip.id, detail)
+    return detail
+  }
+
+  const renderTimelinePanel = async clip => {
+    elements.timelineSegments.replaceChildren()
+
+    if (!clip || !state.timelinePanelOpen) {
+      elements.timelinePanel.classList.add("hidden")
+      return
+    }
+
+    if (clip.timeline_status !== "completed") {
+      elements.timelineSummary.textContent = "Timeline segments will be available after processing completes."
+      const item = document.createElement("li")
+      item.className = "rounded-xl border border-dashed border-base-300 bg-base-200/40 px-4 py-3 text-sm text-base-content/65"
+      item.textContent = clip.timeline_status === "failed"
+        ? clip.timeline_error_message || "Timeline generation failed."
+        : "No timeline is available for this clip yet."
+      elements.timelineSegments.appendChild(item)
+      elements.timelinePanel.classList.remove("hidden")
+      return
+    }
+
+    const detail = await ensureTimelineDetailLoaded(clip)
+    const segments = Array.isArray(detail?.segments) ? detail.segments : []
+
+    elements.timelineSummary.textContent =
+      segments.length > 0
+        ? `${segments.length} timestamped segment${segments.length === 1 ? "" : "s"} from the accurate timeline pass.`
+        : "Timeline completed, but no segments were returned."
+
+    if (segments.length === 0) {
+      const item = document.createElement("li")
+      item.className = "rounded-xl border border-dashed border-base-300 bg-base-200/40 px-4 py-3 text-sm text-base-content/65"
+      item.textContent = "No timeline segments are available."
+      elements.timelineSegments.appendChild(item)
+    } else {
+      segments.forEach(segment => {
+        const item = document.createElement("li")
+        item.className = "rounded-2xl border border-base-300 bg-base-200/50 px-4 py-3"
+
+        const heading = document.createElement("div")
+        heading.className = "flex items-center justify-between gap-3"
+
+        const seq = document.createElement("p")
+        seq.className = "text-[11px] font-medium uppercase tracking-wide text-base-content/55"
+        seq.textContent = `Segment ${segment.seq}`
+
+        const time = document.createElement("p")
+        time.className = "rounded-full border border-base-300 bg-base-100 px-2 py-1 text-[11px] font-medium text-base-content/70"
+        time.textContent = `${formatTimelineMs(segment.start_ms)} - ${formatTimelineMs(segment.end_ms)}`
+
+        const text = document.createElement("p")
+        text.className = "mt-2 text-sm text-base-content/80"
+        text.textContent = segment.text
+
+        heading.appendChild(seq)
+        heading.appendChild(time)
+        item.appendChild(heading)
+        item.appendChild(text)
+        elements.timelineSegments.appendChild(item)
+      })
+    }
+
+    elements.timelinePanel.classList.remove("hidden")
   }
 
   const renderMetadata = async clip => {
@@ -199,6 +307,7 @@ const initMediaLibrary = () => {
       elements.metaTimeline.textContent = "-"
       elements.saveServer.disabled = true
       elements.generateTimeline.disabled = true
+      elements.viewTimeline.disabled = true
       elements.download.disabled = true
       elements.delete.disabled = true
       elements.serverLink.classList.add("hidden")
@@ -220,6 +329,8 @@ const initMediaLibrary = () => {
     elements.saveServer.disabled = false
     elements.generateTimeline.disabled = timelineButtonDisabled(clip)
     elements.generateTimeline.textContent = timelineButtonLabel(clip)
+    elements.viewTimeline.disabled = clip.timeline_status !== "completed"
+    elements.viewTimeline.textContent = state.timelinePanelOpen ? "Hide Timeline" : "View Timeline"
     elements.download.disabled = false
     elements.delete.disabled = false
 
@@ -239,6 +350,7 @@ const initMediaLibrary = () => {
       elements.delete.disabled = true
       elements.saveServer.disabled = true
       elements.generateTimeline.disabled = true
+      elements.viewTimeline.disabled = true
       elements.helper.textContent = "This clip has metadata only and cannot be previewed or downloaded."
       revokePreviewUrl()
       elements.previewVideo.pause()
@@ -269,6 +381,8 @@ const initMediaLibrary = () => {
     elements.previewVideo.classList.remove("hidden")
     elements.previewVideo.src = state.previewUrl
     elements.previewVideo.load()
+
+    await renderTimelinePanel(clip)
   }
 
   const renderList = () => {
@@ -303,6 +417,7 @@ const initMediaLibrary = () => {
 
       button.addEventListener("click", () => {
         state.selectedId = clip.id
+        state.timelinePanelOpen = false
         render()
           .then(() => {
             elements.selectedPanel?.scrollIntoView({
@@ -458,6 +573,19 @@ const initMediaLibrary = () => {
       elements.helper.textContent = error.message || "Could not queue timeline transcription."
       render().catch(() => {})
     })
+  })
+  elements.viewTimeline.addEventListener("click", () => {
+    state.timelinePanelOpen = !state.timelinePanelOpen
+    render()
+      .then(() => {
+        if (state.timelinePanelOpen) {
+          elements.timelinePanel?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          })
+        }
+      })
+      .catch(() => {})
   })
 
   window.addEventListener("beforeunload", revokePreviewUrl)

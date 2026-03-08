@@ -69,6 +69,9 @@
               <button id="media-generate-timeline" class="btn btn-sm btn-outline" disabled>
                 Generate Timeline
               </button>
+              <button id="media-view-timeline" class="btn btn-sm btn-outline" disabled>
+                View Timeline
+              </button>
               <button id="media-download" class="btn btn-sm btn-outline" disabled>
                 Download
               </button>
@@ -114,6 +117,21 @@
                 <dd id="media-meta-timeline" class="font-medium">-</dd>
               </div>
             </dl>
+          </article>
+
+          <article
+            id="media-timeline-panel"
+            class="hidden rounded-3xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-semibold">Timeline Segments</h2>
+                <p id="media-timeline-summary" class="mt-1 text-sm text-base-content/65">
+                  Accurate timeline segments for the selected clip.
+                </p>
+              </div>
+            </div>
+            <ul id="media-timeline-segments" class="mt-4 space-y-3"></ul>
           </article>
         </section>
       </div>
