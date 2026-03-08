@@ -1627,7 +1627,6 @@ export const initRecordStudio = rootElement => {
     const clipId = Date.now()
     state.currentClipId = clipId
     state.transcriptionDisplayMode = "preview"
-    stopTimelinePolling()
     setTimelineTranscriptionState({
       status: state.timelineGenerationEnabled ? "idle" : "disabled",
       message: state.timelineGenerationEnabled
