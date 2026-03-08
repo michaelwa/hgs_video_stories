@@ -19,7 +19,7 @@
 
 // Include phoenix_html to handle method=PUT/DELETE in forms and buttons.
 import "phoenix_html"
-import "./record_studio_stub"
+import RecordStudio from "./record_studio_stub"
 import MediaLibrary from "./hooks/media_library_live"
 // Establish Phoenix Socket and LiveView configuration.
 import {Socket} from "phoenix"
@@ -31,7 +31,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {MediaLibrary, ...colocatedHooks},
+  hooks: {MediaLibrary, RecordStudio, ...colocatedHooks},
 })
 
 // Show progress bar on live navigation and form submits

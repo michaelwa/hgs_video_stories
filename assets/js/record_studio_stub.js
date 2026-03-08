@@ -175,14 +175,14 @@ const negotiateRealtimeSdp = async ({offerSdp, ephemeralKey, model}) => {
   throw new Error(`OpenAI SDP negotiation failed: status ${response.status} (${detail})`)
 }
 
-const initRecordStudio = () => {
+export const initRecordStudio = rootElement => {
   const existingCleanup = window[GLOBAL_CLEANUP_KEY]
   if (typeof existingCleanup === "function") {
     existingCleanup()
     window[GLOBAL_CLEANUP_KEY] = null
   }
 
-  const page = document.getElementById("recording-studio-page")
+  const page = rootElement || document.getElementById("recording-studio-page")
   if (!page || page.dataset.initialized === "true") return
   page.dataset.initialized = "true"
 
@@ -1655,7 +1655,21 @@ const initRecordStudio = () => {
 
   void refreshDeviceOptions()
   render()
+
+  return cleanup
 }
 
-document.addEventListener("DOMContentLoaded", initRecordStudio)
-document.addEventListener("phx:page-loading-stop", initRecordStudio)
+const RecordStudio = {
+  mounted() {
+    this.recordStudioCleanup = initRecordStudio(this.el)
+  },
+
+  destroyed() {
+    if (typeof this.recordStudioCleanup === "function") {
+      this.recordStudioCleanup()
+      this.recordStudioCleanup = null
+    }
+  },
+}
+
+export default RecordStudio
