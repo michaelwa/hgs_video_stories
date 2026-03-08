@@ -156,6 +156,27 @@ const queueTimelineTranscription = async mediaId => {
   return response.json()
 }
 
+const describeTimelineStatus = ({status, errorMessage, segmentCount}) => {
+  switch (status) {
+    case "pending":
+      return "Timeline transcription queued. Waiting for processing to begin."
+    case "processing":
+      return "Timeline transcription is processing on the server."
+    case "completed":
+      return segmentCount > 0
+        ? `Timeline transcription completed (${segmentCount} segments).`
+        : "Timeline transcription completed."
+    case "failed":
+      return errorMessage || "Timeline transcription failed."
+    case "missing":
+      return "Timeline transcription has not been generated yet."
+    case "skipped":
+      return "Timeline transcription is unavailable for this clip."
+    default:
+      return null
+  }
+}
+
 const negotiateRealtimeSdp = async ({offerSdp, ephemeralKey, model}) => {
   const response = await fetch("https://api.openai.com/v1/realtime/calls", {
     method: "POST",
@@ -847,11 +868,17 @@ export const initRecordStudio = rootElement => {
   const syncTimelineTranscription = async mediaId => {
     const payload = await loadTimelineTranscription(mediaId)
     const timeline = payload?.timeline_transcription || {}
-    const segments = Array.isArray(payload?.segments) ? payload.segments : []
+    const segments = Array.isArray(payload?.timeline_segments) ? payload.timeline_segments : []
+    const status = timeline.status || "missing"
+    const message = describeTimelineStatus({
+      status,
+      errorMessage: timeline.error_message || null,
+      segmentCount: segments.length,
+    })
 
     setTimelineTranscriptionState({
-      status: timeline.status || "missing",
-      message: timeline.error_message || null,
+      status,
+      message,
       segments: segments.map(segment => ({
         itemId: `timeline-${segment.seq}`,
         seq: segment.seq,
@@ -861,7 +888,7 @@ export const initRecordStudio = rootElement => {
       })),
     })
 
-    if (timeline.status === "completed" || timeline.status === "failed" || timeline.status === "missing") {
+    if (status === "completed" || status === "failed" || status === "missing") {
       stopTimelinePolling()
     }
   }
@@ -876,7 +903,7 @@ export const initRecordStudio = rootElement => {
   const queueAccurateTimelineTranscription = async mediaId => {
     setTimelineTranscriptionState({
       status: "pending",
-      message: "Queueing accurate timeline transcription...",
+      message: "Waiting for recording to stop so timeline transcription can be queued...",
       segments: [],
     })
     await render()
@@ -885,10 +912,12 @@ export const initRecordStudio = rootElement => {
 
     setTimelineTranscriptionState({
       status: "pending",
-      message: "Timeline transcription queued. Processing starts after upload.",
+      message: "Timeline transcription queued. Waiting for processing to begin.",
     })
+    await render()
 
     await syncTimelineTranscription(mediaId)
+    await render()
 
     if (state.timelineStatus === "pending" || state.timelineStatus === "processing") {
       startTimelinePolling(mediaId)
@@ -1478,7 +1507,7 @@ export const initRecordStudio = rootElement => {
         if (!state.timelineGenerationEnabled) {
           item.textContent = "Timeline generation is off for this recording."
         } else if (state.status === "recording" || state.status === "paused") {
-          item.textContent = "Accurate timeline transcription is generated after recording finishes."
+          item.textContent = "Waiting for recording to stop before timeline transcription can be queued."
         } else if (timelineStatusMessage) {
           item.textContent = timelineStatusMessage
         } else {
