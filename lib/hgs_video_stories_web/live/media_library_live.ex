@@ -152,6 +152,16 @@ defmodule HgsVideoStoriesWeb.MediaLibraryLive do
                         >
                           {if @timeline_panel_open, do: "Hide Transcript", else: "Show Transcript"}
                         </button>
+                        <a
+                          id="media-export-timeline"
+                          href={timeline_export_path(@selected_clip)}
+                          class={[
+                            "btn btn-sm btn-outline",
+                            @selected_clip.timeline_status != "completed" && "hidden"
+                          ]}
+                        >
+                          Export Timeline JSON
+                        </a>
                         <button
                           id="media-download"
                           type="button"
@@ -795,6 +805,10 @@ defmodule HgsVideoStoriesWeb.MediaLibraryLive do
 
   defp transcript_toggle_disabled?(clip), do: is_nil(clip.server_url) or not clip.had_audio
   defp client_blob_action_disabled?(clip), do: not clip.has_blob
+  defp timeline_export_path(nil), do: "#"
+
+  defp timeline_export_path(clip),
+    do: ~p"/api/media_clips/#{clip.id}/timeline_transcription/export"
 
   defp helper_message(nil), do: "Choose a clip to preview, download, or delete."
 

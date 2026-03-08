@@ -61,6 +61,36 @@ defmodule HgsVideoStoriesWeb.TimelineTranscriptionController do
     end
   end
 
+  def export(conn, %{"media_id" => media_id_raw}) do
+    with {:ok, media_id} <- parse_media_id(media_id_raw),
+         %{} = summary <- exportable_timeline_summary(media_id) do
+      payload = %{
+        format: "hgs_video_stories.timeline_transcription.v1",
+        exported_at: DateTime.utc_now() |> DateTime.truncate(:second),
+        media_id: media_id,
+        timeline_transcription: serialize_timeline_transcription(summary),
+        timeline_segments: serialize_segments(media_id, :timeline)
+      }
+
+      send_download(
+        conn,
+        {:binary, Jason.encode!(payload, pretty: true)},
+        filename: "media-#{media_id}-timeline.json",
+        content_type: "application/json"
+      )
+    else
+      {:error, :invalid_media_id, message} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: message})
+
+      {:error, :timeline_unavailable, message} ->
+        conn
+        |> put_status(:conflict)
+        |> json(%{error: message})
+    end
+  end
+
   defp timeline_queue do
     Application.get_env(
       :hgs_video_stories,
@@ -134,5 +164,15 @@ defmodule HgsVideoStoriesWeb.TimelineTranscriptionController do
         end_ms: segment.end_ms
       }
     end)
+  end
+
+  defp exportable_timeline_summary(media_id) do
+    summary = MediaTranscription.timeline_transcription_summary(media_id)
+
+    if summary.timeline_available and summary.status == :completed do
+      summary
+    else
+      {:error, :timeline_unavailable, "Timeline transcript is not available for export yet."}
+    end
   end
 end

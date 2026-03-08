@@ -138,4 +138,60 @@ defmodule HgsVideoStoriesWeb.TimelineTranscriptionControllerTest do
              }
            ]
   end
+
+  test "GET /api/media_clips/:media_id/timeline_transcription/export downloads timeline json", %{
+    conn: conn
+  } do
+    media_id = System.unique_integer([:positive])
+    assert {:ok, session} = MediaTranscription.create_session(%{media_id: media_id})
+
+    :ok =
+      MediaTranscription.replace_timeline_segments(session.id, media_id, [
+        %{text: "Four score", start_ms: 0, end_ms: 1400}
+      ])
+
+    assert {:ok, _timeline} = MediaTranscription.queue_timeline_transcription(media_id)
+    assert {:ok, _timeline} = MediaTranscription.mark_timeline_transcription_completed(media_id)
+
+    conn =
+      conn
+      |> put_req_header("accept", "application/json")
+      |> get(~p"/api/media_clips/#{media_id}/timeline_transcription/export")
+
+    assert response(conn, 200)
+    assert get_resp_header(conn, "content-type") == ["application/json"]
+
+    assert get_resp_header(conn, "content-disposition") == [
+             ~s(attachment; filename="media-#{media_id}-timeline.json")
+           ]
+
+    payload = Jason.decode!(conn.resp_body)
+
+    assert payload["format"] == "hgs_video_stories.timeline_transcription.v1"
+    assert payload["media_id"] == media_id
+    assert payload["timeline_transcription"]["status"] == "completed"
+
+    assert payload["timeline_segments"] == [
+             %{
+               "end_ms" => 1400,
+               "id" => payload["timeline_segments"] |> hd() |> Map.fetch!("id"),
+               "seq" => 1,
+               "start_ms" => 0,
+               "text" => "Four score"
+             }
+           ]
+  end
+
+  test "GET /api/media_clips/:media_id/timeline_transcription/export returns 409 when timeline is unavailable",
+       %{conn: conn} do
+    media_id = System.unique_integer([:positive])
+
+    response =
+      conn
+      |> put_req_header("accept", "application/json")
+      |> get(~p"/api/media_clips/#{media_id}/timeline_transcription/export")
+      |> json_response(409)
+
+    assert response["error"] == "Timeline transcript is not available for export yet."
+  end
 end
