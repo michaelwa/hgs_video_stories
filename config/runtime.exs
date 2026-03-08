@@ -25,6 +25,7 @@ config :hgs_video_stories, HgsVideoStoriesWeb.Endpoint,
 
 if openai_api_key = System.get_env("OPENAI_API_KEY") do
   config :hgs_video_stories, :openai_realtime, api_key: openai_api_key
+  config :hgs_video_stories, :openai_timeline, api_key: openai_api_key
 end
 
 if config_env() == :prod do

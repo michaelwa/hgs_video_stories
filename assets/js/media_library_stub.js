@@ -31,6 +31,7 @@ const SOURCE_DISPLAY_LABELS = {
   screen: "Screen / Application + Audio",
   screen_only: "Screen / Application only",
 }
+const TIMELINE_STATUS_POLL_MS = 3000
 
 const formatTimelineStatus = clip => {
   if (!clip.server_url) return "Upload required"
@@ -118,6 +119,7 @@ const initMediaLibrary = () => {
     emptyState: document.getElementById("media-empty-state"),
     populatedState: document.getElementById("media-populated-state"),
     list: document.getElementById("media-clip-list"),
+    selectedPanel: document.getElementById("media-selected-panel"),
     title: document.getElementById("media-selected-title"),
     previewVideo: document.getElementById("media-preview-video"),
     previewImage: document.getElementById("media-preview-image"),
@@ -140,6 +142,7 @@ const initMediaLibrary = () => {
     selectedId: null,
     previewUrl: null,
     timelineStatuses: new Map(),
+    timelinePollRef: null,
   }
 
   const decorateClip = clip => {
@@ -156,6 +159,43 @@ const initMediaLibrary = () => {
     if (!state.previewUrl) return
     URL.revokeObjectURL(state.previewUrl)
     state.previewUrl = null
+  }
+
+  const stopTimelinePolling = () => {
+    if (state.timelinePollRef) {
+      window.clearInterval(state.timelinePollRef)
+      state.timelinePollRef = null
+    }
+  }
+
+  const hasPendingTimelineWork = () =>
+    state.clips.some(clip => {
+      const status = state.timelineStatuses.get(clip.id)?.status
+      return status === "pending" || status === "processing"
+    })
+
+  const refreshTimelineStatuses = async () => {
+    state.timelineStatuses = await fetchTimelineStatuses(state.clips.map(clip => clip.id))
+  }
+
+  const ensureTimelinePolling = () => {
+    if (!hasPendingTimelineWork()) {
+      stopTimelinePolling()
+      return
+    }
+
+    if (state.timelinePollRef) return
+
+    state.timelinePollRef = window.setInterval(() => {
+      refreshTimelineStatuses()
+        .then(() => render())
+        .then(() => {
+          if (!hasPendingTimelineWork()) {
+            stopTimelinePolling()
+          }
+        })
+        .catch(() => {})
+    }, TIMELINE_STATUS_POLL_MS)
   }
 
   const renderMetadata = async clip => {
@@ -258,7 +298,7 @@ const initMediaLibrary = () => {
 
       button.type = "button"
       button.className = selected
-        ? `w-full rounded-2xl border p-3 text-left ${tone} ring-1 ring-primary/30`
+        ? `w-full rounded-2xl border p-3 text-left ${tone} ring-2 ring-primary/40 shadow-sm`
         : `w-full rounded-2xl border p-3 text-left ${tone}`
 
       button.innerHTML =
@@ -272,7 +312,14 @@ const initMediaLibrary = () => {
 
       button.addEventListener("click", () => {
         state.selectedId = clip.id
-        render().catch(() => {})
+        render()
+          .then(() => {
+            elements.selectedPanel?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            })
+          })
+          .catch(() => {})
       })
 
       item.appendChild(button)
@@ -297,7 +344,8 @@ const initMediaLibrary = () => {
   const syncState = async () => {
     state.clips = await listClipMetadata()
     state.selectedId = state.selectedId || state.clips[0]?.id || null
-    state.timelineStatuses = await fetchTimelineStatuses(state.clips.map(clip => clip.id))
+    await refreshTimelineStatuses()
+    ensureTimelinePolling()
   }
 
   const downloadSelected = async () => {
@@ -386,6 +434,7 @@ const initMediaLibrary = () => {
     await syncState()
     state.selectedId = selectedClip.id
     await render()
+    ensureTimelinePolling()
     elements.helper.textContent = "Timeline transcription queued."
   }
 
@@ -409,6 +458,7 @@ const initMediaLibrary = () => {
   })
 
   window.addEventListener("beforeunload", revokePreviewUrl)
+  window.addEventListener("beforeunload", stopTimelinePolling)
 
   if (!supportsPersistentClipStore()) {
     elements.helper.textContent = "This browser does not support persistent clip storage."
